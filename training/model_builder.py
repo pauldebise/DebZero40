@@ -89,6 +89,6 @@ def build_model(input_shape=(8, 8, 112), blocks=10, filters=128, se_ratio=8):
 
 
 if __name__ == "__main__":
-    model = build_model(input_shape=(8, 8, 24), blocks=5, filters=64, se_ratio=8)
+    model = build_model(input_shape=(8, 8, 12), blocks=15, filters=256, se_ratio=8)
 
     model.summary()
