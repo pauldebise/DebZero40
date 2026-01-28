@@ -39,8 +39,7 @@ def res_block(x, filters, se_ratio=8):
 
 def policy_block(x, filters):
     """
-    Policy head with .
-    Sortie : Vecteur de probabilités de taille 1858.
+    Policy head with 1858 ouput encoding.
     """
 
     x = layers.Conv2D(32, 1, padding='same', use_bias=False)(x)
@@ -68,7 +67,7 @@ def value_block(x):
 
     x = layers.Dense(256, activation='swish')(x)
 
-    output_value = layers.Dense(1, activation='tanh', name='value')(x)
+    output_value = layers.Dense(3, activation='tanh', name='wdl')(x)
 
     return output_value
 
