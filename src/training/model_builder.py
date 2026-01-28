@@ -38,16 +38,21 @@ def res_block(x, filters, se_ratio=8):
 
 
 def policy_block(x, filters):
+    """
+    Policy head with .
+    Sortie : Vecteur de probabilités de taille 1858.
+    """
 
-    x = layers.Conv2D(filters, 3, padding='same', use_bias=False)(x)
+    x = layers.Conv2D(32, 1, padding='same', use_bias=False)(x)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('swish')(x)
 
-    x = layers.Conv2D(73, 1, padding='same', use_bias=True)(x)
 
     x = layers.Flatten()(x)
 
-    output_policy = layers.Activation('softmax', name='policy')(x)
+    x = layers.Dense(filters * 2, activation='swish')(x)
+
+    output_policy = layers.Dense(1858, activation='softmax', dtype='float32', name='policy')(x)
 
     return output_policy
 
@@ -68,7 +73,7 @@ def value_block(x):
     return output_value
 
 
-def build_model(input_shape=(8, 8, 112), blocks=10, filters=128, se_ratio=8):
+def build_model(input_shape=(8, 8, 112), blocks=6, filters=64, se_ratio=8):
 
     inputs = layers.Input(shape=input_shape, name='input')
 
@@ -89,6 +94,6 @@ def build_model(input_shape=(8, 8, 112), blocks=10, filters=128, se_ratio=8):
 
 
 if __name__ == "__main__":
-    model = build_model(input_shape=(8, 8, 12), blocks=15, filters=256, se_ratio=8)
+    model = build_model(input_shape=(8, 8, 12), blocks=12, filters=128, se_ratio=8)
 
     model.summary()
