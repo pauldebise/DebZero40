@@ -68,6 +68,7 @@ def process_parquet_file(args):
 
                     input_tensor = fen_to_planes_int8(row['fen'])
                     policy_vec = np.array(row['policy'], dtype=np.float32)
+                    policy_vec[policy_vec < 0] = 0.0
                     value_target = np.array(row['wdl'], dtype=np.float32)
 
                     serialized = serialize_example(input_tensor, policy_vec, value_target)
@@ -82,7 +83,7 @@ def process_parquet_file(args):
         return f"Error encountered for file {file_index} : {str(e)}"
 
 
-def main():
+def process_dataset(limit=None):
 
     if not os.path.exists(OUTPUT_TFRECORD_DIR):
         os.makedirs(OUTPUT_TFRECORD_DIR)
@@ -94,8 +95,13 @@ def main():
         print(f"No files .parquet found in {INPUT_PARQUET_DIR}")
         return
 
-    print(f"🚀 Starting the conversion of {len(parquet_files)} files with {NUM_WORKERS} workers...")
-    print(f"Config: Input INT8 | Policy/Value FP32 | Compression GZIP")
+    if limit is not None:
+        original_count = len(parquet_files)
+        parquet_files = parquet_files[:limit]
+        print(f"LIMIT ACTIVATED : {len(parquet_files)} files processed out of the {original_count} availables.")
+
+    print(f"Starting the conversion of {len(parquet_files)} files with {NUM_WORKERS} workers...")
+    print(f"Config: Input INT8 | Policy/WDL FP32 | Compression GZIP")
 
 
     tasks = []
@@ -117,4 +123,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    process_dataset()

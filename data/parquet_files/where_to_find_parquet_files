@@ -1,1 +1,8 @@
 https://huggingface.co/datasets/Maxlegrec/ChessFENS/tree/main
+
+
+
+to download the dataset type these in the terminal :
+
+git lfs install
+git clone https://huggingface.co/datasets/Maxlegrec/ChessFENS data/parquet_files

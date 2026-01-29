@@ -72,7 +72,7 @@ def value_block(x):
     return output_value
 
 
-def build_model(input_shape=(8, 8, 112), blocks=6, filters=64, se_ratio=8):
+def build_model(input_shape=(8, 8, 12), blocks=6, filters=64, se_ratio=8):
 
     inputs = layers.Input(shape=input_shape, name='input')
 
