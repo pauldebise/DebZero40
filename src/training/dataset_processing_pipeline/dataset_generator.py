@@ -10,7 +10,7 @@ from multiprocessing import Pool, cpu_count
 import time
 
 
-INPUT_PARQUET_DIR = "../../../data/parquet_files/"
+INPUT_PARQUET_DIR = "data/parquet_files/"
 OUTPUT_TFRECORD_DIR = "../../../data/tfrecords_gzip/"
 NUM_WORKERS = max(1, cpu_count() - 2)
 

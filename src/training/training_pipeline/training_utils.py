@@ -28,23 +28,31 @@ def parse_compressed_tfrecord(example_proto):
     return x, {'policy': p, 'wdl': v}
 
 
-
-
-def get_datasets(tfrecord_dir, batch_size=1024, validation_split=0):
-
+def get_datasets(
+        tfrecord_dir,
+        batch_size=1024,
+        validation_split=0.1,
+        avg_samples_per_file=1_000_000
+):
     files = tf.io.gfile.glob(os.path.join(tfrecord_dir, "*.gz"))
+
     random.shuffle(files)
 
     num_val = int(len(files) * validation_split)
-    if num_val == 0 and len(files) > 1:
+    if num_val == 0 and len(files) > 1 and validation_split > 0:
         num_val = 1
 
     val_files = files[:num_val]
     train_files = files[num_val:]
 
-    print(f"Total number of files : {len(files)}")
-    print(f"Training   : {len(train_files)} files")
-    print(f"Validation : {len(val_files)} files")
+
+    train_steps = int((len(train_files) * avg_samples_per_file * 0.95) // batch_size)
+    val_steps = int((len(val_files) * avg_samples_per_file * 0.95) // batch_size)
+
+    print(f"Total fichiers: {len(files)}")
+    print(f" -> Train : {len(train_files)} fichiers | ~{train_steps} steps/epoch")
+    print(f" -> Val   : {len(val_files)} fichiers | ~{val_steps} steps")
+
 
     def build_pipeline(file_list, is_training):
         if not file_list:
@@ -61,18 +69,19 @@ def get_datasets(tfrecord_dir, batch_size=1024, validation_split=0):
         if is_training:
             ds = ds.shuffle(buffer_size=50000)
             ds = ds.batch(batch_size, drop_remainder=True)
-
+            ds = ds.repeat()
         else:
             ds = ds.batch(batch_size, drop_remainder=False)
 
         ds = ds.prefetch(tf.data.AUTOTUNE)
         return ds
 
-
     train_dataset = build_pipeline(train_files, is_training=True)
     val_dataset = build_pipeline(val_files, is_training=False)
 
-    return train_dataset, val_dataset
+
+    return train_dataset, val_dataset, train_steps, val_steps
+
 
 def train_model(
         model,

@@ -67,7 +67,7 @@ def value_block(x):
 
     x = layers.Dense(256, activation='swish')(x)
 
-    output_value = layers.Dense(3, activation='tanh', name='wdl')(x)
+    output_value = layers.Dense(3, activation='softmax', name='wdl')(x)
 
     return output_value
 
