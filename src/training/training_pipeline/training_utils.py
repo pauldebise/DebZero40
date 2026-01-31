@@ -162,8 +162,6 @@ def train_model(
     optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
 
 
-
-
     model.compile(
         optimizer=optimizer,
 
@@ -177,7 +175,7 @@ def train_model(
             'wdl': value_loss_weight
         },
         metrics={
-            'policy': 'categorical_accuracy',
+            'policy': ['categorical_accuracy', tf.keras.metrics.TopKCategoricalAccuracy(k=2, name='top_2_acc')],
             'wdl': ['categorical_accuracy', 'mae']
         }
     )
