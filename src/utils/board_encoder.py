@@ -16,6 +16,9 @@ def fen_to_planes_int8(fen):
         piece_offset = piece.piece_type - 1
         color_offset = 0 if piece.color == chess.WHITE else 6
 
+        if board.turn == chess.BLACK:
+            color_offset = 1 - color_offset
+
         planes[rank, file, piece_offset + color_offset] = 1
 
     return planes
