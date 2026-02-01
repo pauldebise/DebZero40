@@ -8,7 +8,7 @@ def fen_to_planes_int8(fen):
     planes = np.zeros((8, 8, 12), dtype=np.int8)
     piece_map = board.piece_map()
 
-
+    #The board is mirrored when it is black's turn so the network only learns to play white
     is_black_turn = (board.turn == chess.BLACK)
 
     for square, piece in piece_map.items():
