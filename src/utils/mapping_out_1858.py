@@ -72,3 +72,9 @@ class FlatMapper:
                 return self.move_to_index[base_move]
 
         return None
+
+
+if __name__ == "__main__":
+    fm = FlatMapper()
+    print(fm.get_move_index("e7e8"))
+    print(fm.get_move_string(1551))
