@@ -159,7 +159,7 @@ def train_model(
     ]
 
 
-    optimizer = tf.keras.optimizers.AdamW(learning_rate=learning_rate, weight_decay=1e-5)
+    optimizer = tf.keras.optimizers.AdamW(learning_rate=learning_rate, weight_decay=1e-2)
 
 
     model.compile(
