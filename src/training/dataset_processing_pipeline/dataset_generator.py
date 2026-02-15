@@ -11,7 +11,7 @@ import time
 
 
 INPUT_PARQUET_DIR = "data/parquet_files/"
-OUTPUT_TFRECORD_DIR = "../../../data/tfrecords_gzip/"
+OUTPUT_TFRECORD_DIR = "data/tfrecords_gzip/"
 NUM_WORKERS = max(1, cpu_count() - 2)
 
 
