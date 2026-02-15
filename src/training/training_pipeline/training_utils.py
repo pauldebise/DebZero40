@@ -1,5 +1,5 @@
+import glob
 import random
-
 import tensorflow as tf
 import os
 from datetime import datetime
@@ -32,9 +32,14 @@ def get_datasets(
         tfrecord_dir,
         batch_size=1024,
         validation_split=0.1,
-        avg_samples_per_file=1_000_000
+        avg_samples_per_file=1_000_000,
+        cache_compressed_dataset=False
 ):
-    files = tf.io.gfile.glob(os.path.join(tfrecord_dir, "*.gz"))
+
+    files = sorted(glob.glob(os.path.join(tfrecord_dir, "*.gz")))
+
+    if not files:
+        raise ValueError(f"No .gz files found in {tfrecord_dir}")
 
     random.shuffle(files)
 
@@ -45,14 +50,17 @@ def get_datasets(
     val_files = files[:num_val]
     train_files = files[num_val:]
 
+    total_train_samples = len(train_files) * avg_samples_per_file
+    total_val_samples = len(val_files) * avg_samples_per_file
 
-    train_steps = int((len(train_files) * avg_samples_per_file * 0.95) // batch_size)
-    val_steps = int((len(val_files) * avg_samples_per_file * 0.95) // batch_size)
+    train_steps = int((total_train_samples * 0.95) // batch_size)
+    val_steps = int((total_val_samples * 0.95) // batch_size)
 
-    print(f"Total fichiers: {len(files)}")
-    print(f" -> Train : {len(train_files)} fichiers | ~{train_steps} steps/epoch")
-    print(f" -> Val   : {len(val_files)} fichiers | ~{val_steps} steps")
-
+    print(f"--- Dataset configuration---")
+    print(f"Dataset caching option : {'activated' if cache_compressed_dataset else 'deactivated'}")
+    print(f"Total files : {len(files)}")
+    print(f" -> Train : {len(train_files)} files | ~{train_steps} steps/epoch")
+    print(f" -> Val : {len(val_files)} files | ~{val_steps} steps")
 
     def build_pipeline(file_list, is_training):
         if not file_list:
@@ -64,24 +72,28 @@ def get_datasets(
             num_parallel_reads=tf.data.AUTOTUNE
         )
 
-        ds = ds.map(parse_compressed_tfrecord, num_parallel_calls=tf.data.AUTOTUNE)
+        if cache_compressed_dataset:
+            ds = ds.cache()
 
         if is_training:
             ds = ds.shuffle(buffer_size=50000)
+
+        ds = ds.map(parse_compressed_tfrecord, num_parallel_calls=tf.data.AUTOTUNE)
+
+        if is_training:
             ds = ds.batch(batch_size, drop_remainder=True)
             ds = ds.repeat()
         else:
-            ds = ds.batch(batch_size, drop_remainder=False)
+            ds = ds.batch(batch_size, drop_remainder=True)
 
         ds = ds.prefetch(tf.data.AUTOTUNE)
+
         return ds
 
     train_dataset = build_pipeline(train_files, is_training=True)
     val_dataset = build_pipeline(val_files, is_training=False)
 
-
     return train_dataset, val_dataset, train_steps, val_steps
-
 
 def train_model(
         model,

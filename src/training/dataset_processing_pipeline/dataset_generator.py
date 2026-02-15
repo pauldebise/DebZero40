@@ -80,7 +80,7 @@ def process_parquet_file(args):
         return f"Error encountered for file {file_index} : {str(e)}"
 
 
-def process_dataset(limit=None):
+def process_dataset(limit=None, num_workers=NUM_WORKERS):
 
     if not os.path.exists(OUTPUT_TFRECORD_DIR):
         os.makedirs(OUTPUT_TFRECORD_DIR)
@@ -97,7 +97,7 @@ def process_dataset(limit=None):
         parquet_files = parquet_files[:limit]
         print(f"LIMIT ACTIVATED : {len(parquet_files)} files processed out of the {original_count} availables.")
 
-    print(f"Starting the conversion of {len(parquet_files)} files with {NUM_WORKERS} workers...")
+    print(f"Starting the conversion of {len(parquet_files)} files with {num_workers} workers...")
     print(f"Config: Input INT8 | Policy/WDL FP32 | Compression GZIP")
 
 
@@ -108,7 +108,7 @@ def process_dataset(limit=None):
     start_time = time.time()
 
 
-    with Pool(processes=NUM_WORKERS) as pool:
+    with Pool(processes=num_workers) as pool:
 
         for result in pool.imap_unordered(process_parquet_file, tasks):
             print(result)
