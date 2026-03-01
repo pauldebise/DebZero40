@@ -205,9 +205,9 @@ class NetWrapper:
 
 
 if __name__ == "__main__":
-    fen = r"6k1/8/5K2/4N1P1/4n3/8/8/8 w - - 1 72"
+    fen = r"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1"
     b = chess.Board(fen)
-    net_path = r"..\..\nets\test3\best_model_int8.onnx"
+    net_path = r"..\..\nets\run_6_64_2_fp32.onnx"
     nw = NetWrapper(net_path, temperature=1)
     warmup = nw.inference(b)
     inference = nw.inference(b)
