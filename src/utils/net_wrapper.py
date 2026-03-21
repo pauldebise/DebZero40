@@ -44,9 +44,6 @@ class NetWrapper:
         return ort_session, input_name, target_dtype
 
     def _apply_temperature_and_normalize(self, move_probs, temp):
-        """
-        Applique la température dynamique donnée.
-        """
         if temp == 1.0:
             return move_probs
 
@@ -55,7 +52,6 @@ class NetWrapper:
         inv_temp = 1.0 / temp
 
         for p, m in move_probs:
-            # Sécurité mathématique
             if p > 1e-9:
                 new_p = p ** inv_temp
             else:
@@ -65,25 +61,15 @@ class NetWrapper:
 
         if sum_probs == 0: return temp_probs
 
-        # Renormalisation
         final_probs = [(p / sum_probs, m) for p, m in temp_probs]
         return final_probs
 
     def _get_dynamic_temperature(self, board: chess.Board) -> float:
-        """
-        Détermine la température selon le stade de la partie.
-        """
-        # Compte le nombre de pièces (Rois inclus)
         piece_count = board.occupied.bit_count()
 
-        # --- MODE FINALE (ENDGAME) ---
-        # Si 5 pièces ou moins (ex: Roi+Tour vs Roi, Roi+Pion vs Roi...)
         if piece_count <= 5:
-            # On vérifie si on n'est pas en train de se faire mater (auquel cas on garde la précision)
-            # Mais en général, on veut augmenter l'exploration pour trouver le mat.
-            return 8.0  # Température EXTRÊME pour aplatir les probas et laisser l'heuristique décider
+            return 8.0
 
-        # --- MODE MILIEU DE JEU ---
         return self.temperature
 
     def inference(self, board):
@@ -119,10 +105,8 @@ class NetWrapper:
             move_probability = policy[move_index]
             proba_moves.append((move_probability, move))
 
-        # --- APPLICATION TEMPERATURE ---
         current_temp = self._get_dynamic_temperature(board)
         proba_moves = self._apply_temperature_and_normalize(proba_moves, current_temp)
-        # -------------------------------
 
         if board.turn == chess.BLACK:
             proba_moves = [(p, mirror_move(m)) for (p, m) in proba_moves]
@@ -130,19 +114,14 @@ class NetWrapper:
         return proba_moves, wdl, t_end - t_start
 
     def inference_batch(self, boards: list[chess.Board]) -> tuple:
-        """
-        Exécute l'inférence sur une liste de positions (batch).
-        Renvoie : (liste_de_listes_moves_probs, liste_ de_wdls)
-        """
+
         if not boards:
             return [], []
 
         batch_planes = []
-        meta_data = []  # Pour stocker (work_board, is_black_turn)
+        meta_data = []
 
-        # 1. Prétraitement (Encoding)
         for board in boards:
-            # Gestion de la symétrie : le réseau voit toujours comme les Blancs
             if board.turn == chess.WHITE:
                 work_board = board
                 is_black = False
@@ -150,37 +129,25 @@ class NetWrapper:
                 work_board = board.mirror()
                 is_black = True
 
-            # On stocke le board de travail pour générer les coups légaux plus tard
             meta_data.append((work_board, is_black))
 
-            # Encodage FEN -> Tenseur
             encoded = fen_to_planes_int8(work_board.fen()).astype(self.target_type)
             batch_planes.append(encoded)
 
-        # 2. Création du tenseur de batch (N, 13, 8, 8)
-        # C'est ici que l'optimisation opère : np.stack est très efficace
         input_tensor = np.stack(batch_planes)
-
-        # 3. Inférence groupée
-        # ONNX Runtime va traiter les N positions simultanément
         outputs = self.session.run(None, {self.input_name: input_tensor})
 
-        # Récupération des sorties brutes
         batch_policy_logits = outputs[0]  # Shape (N, 1858)
         batch_wdl = outputs[1]  # Shape (N, 3)
 
         results_policies = []
         results_wdls = []
 
-        # 4. Post-traitement (Decoding)
-        # On doit réassocier chaque sortie à ses coups légaux
         for i, (work_board, is_black) in enumerate(meta_data):
 
-            # Extraction des données brutes pour l'élément i
-            policy_arr = batch_policy_logits[i]  # Vecteur plat (1858,)
-            wdl_arr = batch_wdl[i]  # Vecteur (3,)
+            policy_arr = batch_policy_logits[i]
+            wdl_arr = batch_wdl[i]
 
-            # Mapping : Index Réseau -> Coups Python
             move_list = list(work_board.legal_moves)
             proba_moves = []
 
@@ -189,12 +156,9 @@ class NetWrapper:
                 move_probability = float(policy_arr[move_index])
                 proba_moves.append((move_probability, move))
 
-            # --- APPLICATION TEMPERATURE ---
             current_temp = self._get_dynamic_temperature(boards[i])
             proba_moves = self._apply_temperature_and_normalize(proba_moves, current_temp)
-            # -------------------------------
 
-            # Si c'était aux noirs, on remet les coups dans le bon sens (miroir inverse)
             if is_black:
                 proba_moves = [(p, mirror_move(m)) for (p, m) in proba_moves]
 
@@ -206,7 +170,7 @@ class NetWrapper:
 
 if __name__ == "__main__":
     fen = r"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1"
-    b = chess.Board(fen)
+    b = chess.Board()
     net_path = r"..\..\nets\run_6_64_2_fp32.onnx"
     nw = NetWrapper(net_path, temperature=1)
     warmup = nw.inference(b)

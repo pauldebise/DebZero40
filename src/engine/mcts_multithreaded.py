@@ -394,8 +394,7 @@ class MctsGraph:
                 self.backpropagate(search_path, np.array(wdl))
                 self.node_counter += 1
 
-    def search(self, board: chess.Board, searchmove: List[chess.Move] = None, stop_event: threading.Event = None,
-               time_manager=None, nodes=None):
+    def search(self, board: chess.Board, searchmove: List[chess.Move] = None, stop_event: threading.Event = None, time_manager=None, nodes=None):
 
         self.tb_hits = 0
         self.node_counter = 0
