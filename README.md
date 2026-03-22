@@ -18,6 +18,7 @@
 ## À propos du projet
 
 **DebZero** est un moteur d'échecs expérimental développé dans le but d'explorer l'apprentissage par renforcement profond (Deep Reinforcement Learning).
+Il est actuellemnt déployé sur [Lichess](https://lichess.org/@/debzero) où il tourne sur un VPS Hetzner (2 AMD CPU cores) à environ 500 noeuds par secondes.
 
 ### Fonctionnalités clés
 * **Recherche Arborescente Monte-Carlo (MCTS) :** Exploration de l'arbre des coups possibles basée sur des probabilités.
