@@ -1,3 +1,6 @@
 .venv/
+.venvt/
 .idea/
+.uci.build/
+.uci.dist/
 __pycache__/
