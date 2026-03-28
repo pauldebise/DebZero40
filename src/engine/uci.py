@@ -3,8 +3,8 @@ import os
 import threading
 from time import perf_counter
 import chess
-from mcts_multithreaded import MctsGraph as MctsGraphMultiThreaded
-from mcts_singlethreaded import MctsGraph as MctsGraphSingleThreaded
+from src.engine.mcts_multithreaded import MctsGraph as MctsGraphMultiThreaded
+from src.engine.mcts_singlethreaded import MctsGraph as MctsGraphSingleThreaded
 from src.utils.net_wrapper import NetWrapper
 
 
@@ -226,6 +226,7 @@ if __name__ == '__main__':
         print("--------------------------------------------------")
         print(f"The engine searches for the nets here : {model_path}")
         print("Please check if nets are correctly placed.")
+        print("The default net is run_6_64_2_fp32.onnx, it has to be correctly placed to start the engine.")
         print("--------------------------------------------------")
         input("Press enter to quit...")
         sys.exit(1)
