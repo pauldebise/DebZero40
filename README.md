@@ -1,10 +1,10 @@
 <p align="center">
-  <h1 align="center">DebZero</h1>
+  <h1 align="center">DebZero40</h1>
 </p>
 
 <p align="center">
-  <strong>Un moteur d'échecs open source basé sur un algorithme MCTS dirigé par un réseau de neurones convolutif.</strong><br>
-  Inspiré par l'architecture d'AlphaZero et de LeelaChessZero.
+  <strong>An open-source chess engine based on an MCTS algorithm guided by a convolutional neural network.</strong><br>
+  Inspired by the architecture of AlphaZero and LeelaChessZero.
 </p>
 
 <p align="center">
@@ -15,38 +15,39 @@
 
 ---
 
-## À propos du projet
+## About the project
 
-**DebZero** est un moteur d'échecs expérimental développé dans le but d'explorer l'apprentissage par renforcement profond (Deep Reinforcement Learning).
-Il est actuellemnt déployé sur [Lichess](https://lichess.org/@/debzero) où il tourne sur un VPS Hetzner (2 AMD CPU cores) à environ 500 noeuds par secondes.
+**DebZero** is an experimental chess engine developed with the goal of exploring Deep Reinforcement Learning.
+It is currently deployed on [Lichess](https://lichess.org/@/debzero) where it runs on a Hetzner VPS (2 AMD CPU cores) at around 500 nodes per second.
 
-### Fonctionnalités clés
-* **Recherche Arborescente Monte-Carlo (MCTS) :** Exploration de l'arbre des coups possibles basée sur des probabilités.
-* **Réseaux de Neurones Convolutifs Résiduels (ResNet) :** Utilisé pour l'évaluation des positions et la politique (probabilité des coups).
-* **Support du protocole UCI :** Compatible avec les interfaces graphiques d'échecs standards (Arena, Cute Chess...).
+### Key features
+* **Monte Carlo Tree Search (MCTS):** Exploration of the possible moves tree based on probabilities.
+* **Residual Convolutional Neural Networks (ResNet):** Used for position evaluation and policy (move probabilities).
+* **UCI Protocol Support:** Compatible with standard chess GUIs (Arena, Cute Chess...).
 
-## Architecture et Fonctionnement
+## Architecture and How It Works
 
-1. **Réseau de neurones :** Le modèle prend l'état actuel du plateau (sous forme d'un tenseur de taille `(8, 8, 12)`) en entrée et sort deux valeurs :
-   - `Policy (p)` : Un vecteur de probabilités pour tous les coups légaux.
-   - `Value (v)` : Un vecteur de probabilités WDL (Win/Draw/Loss) qui tente de prédire l'issue de la partie.
-2. **MCTS :** La recherche est guidée par les prédictions du réseau de neurones, ce qui permet à l'algorithme d'ignorer les mauvaises branches très tôt dans le processus.
+1. **Neural Network:** The model takes the current board state (as a tensor of size `(8, 8, 12)`) as input and outputs two values:
+   - `Policy (p)`: A probability vector for all legal moves.
+   - `Value (v)`: A WDL (Win/Draw/Loss) probability vector that attempts to predict the outcome of the game.
+2. **MCTS:** The search is guided by the neural network's predictions, allowing the algorithm to ignore bad branches very early in the process.
 
 ## Installation
 
-### Prérequis
+### Prerequisites
 * Python 3.11
-* Éventuellement une interface compatible UCI
+* Optionally, a UCI-compatible GUI
 
-### Étapes
+### Steps
 ```bash
-# Cloner le dépôt
+# Clone the repository
 git clone [https://github.com/pauldebise/DebZero40.git](https://github.com/pauldebise/DebZero40.git)
 cd DebZero40
 
-# Créer un environnement virtuel (en pyton 3.11)
+# Create a virtual environment (with Python 3.11)
 python3.11 -m venv venv
-source venv/bin/activate  # Sur Windows : venv\Scripts\activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Installer les dépendances
+# Install dependencies
 pip install -r requirements.txt
+```
