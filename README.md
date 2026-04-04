@@ -18,7 +18,7 @@
 ## About the project
 
 **DebZero** is an experimental chess engine developed with the goal of exploring Deep Reinforcement Learning.
-It is currently deployed on [Lichess](https://lichess.org/@/debzero) where it runs on a Hetzner VPS (2 AMD CPU cores) at around 500 nodes per second.
+It is currently deployed on [Lichess](https://lichess.org/@/debzero) where it runs on a Hetzner VPS (single AMD CPU core) at around 500 nodes per second.
 
 ### Key features
 * **Monte Carlo Tree Search (MCTS):** Exploration of the possible moves tree based on probabilities.
