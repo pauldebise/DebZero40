@@ -152,6 +152,7 @@ class MctsGraph:
     def expand_node(self, node: MctsNode, board: chess.Board, policy_prob: Dict[chess.Move, float]):
         legal_moves = list(board.legal_moves)
         total_prob = sum(policy_prob.get(m, 0.0) for m in legal_moves)
+        if total_prob == 0: total_prob = 1
 
         for move in legal_moves:
             prob = policy_prob.get(move, 0.0) / total_prob
