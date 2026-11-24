@@ -96,18 +96,21 @@ avec un vrai entraînement (300 pas sur 30 M paramètres ne prouvent rien sur la
 
 | Match | Format | Score de la nouvelle version |
 |---|---|---|
-| 1er | 24 parties, 250 nœuds/coup | 39,6 % [IC95 26,4 – 52,7] |
-| 2e | 16 parties, 1200 nœuds/coup | en cours au moment du rapport |
+| 1er | 24 parties, 250 nœuds/coup, 4 demi-coups d'ouverture | 39,6 % [IC95 26,4 – 52,7] |
+| 2e | 24 parties, 600 nœuds/coup, 8 demi-coups d'ouverture | 39,6 % [IC95 24,0 – 55,2] |
 
-À ces volumes, aucune différence n'est statistiquement significative. Le fait marquant est
-le **nombre élevé de nulles par répétition** : les deux moteurs partagent le même réseau,
-donc les mêmes angles morts. Ce n'est pas un défaut du nouveau code (la détection de
-répétition est vérifiée par tests), c'est la limite du réseau actuel.
+Les deux intervalles de confiance encadrent 50 % : **aucune différence significative**. Le score
+identique sur deux réglages différents indique que les deux moteurs jouent au même niveau, ce qui
+est cohérent — ils partagent le même réseau, donc les mêmes angles morts.
 
-**Conclusion honnête** : le moteur est plus rapide, plus sûr (plus de perte au temps, plus
-de silence), mieux structuré et prêt pour le prochain réseau — mais il ne peut pas être
-nettement plus fort tant que le réseau n'est pas réentraîné. Le gain de force viendra du
-réseau, pas du code de recherche.
+Fait marquant : une part importante des parties finit en nulle par répétition. Ce n'est pas un
+défaut du nouveau code (la détection de répétition est vérifiée par test unitaire), c'est le
+réseau actuel qui ne sait pas convertir ses positions avantageuses.
+
+**Conclusion honnête** : le moteur est plus rapide, plus sûr (plus de perte au temps, plus de
+silence), mieux structuré et prêt pour le prochain réseau — mais il ne peut pas être nettement
+plus fort tant que le réseau n'est pas réentraîné. Le gain de force viendra du réseau, pas du
+code de recherche. Prétendre le contraire serait faux.
 
 ## 5. Prochaine étape recommandée
 
