@@ -169,36 +169,64 @@ class Search:
         )
 
     def _run(self, board: chess.Board, max_nodes: Optional[int]):
-        if self.mcts is None:
-            return
+        """Recherche avec garde-fou : on doit TOUJOURS répondre un bestmove.
 
-        # Mate immédiat : inutile de lancer un arbre.
-        for move in board.legal_moves:
-            board.push(move)
-            is_mate = board.is_checkmate()
-            board.pop()
-            if is_mate:
-                self._emit(move, None)
+        Un moteur qui ne répond pas à un `go` perd la partie au temps. Position sans coup
+        légal, réseau absent, branche imprévue : on répond `bestmove 0000` (nulle UCI)
+        plutôt que de laisser le fil mourir en silence.
+        """
+        try:
+            if self.mcts is None:
+                self._emit(chess.Move.null(), None)
                 return
 
-        if max_nodes is None:
-            def stop():
-                self._should_stop_run += 1
-                if self._should_stop_run % 200 == 0:
-                    self._report(board)
-                return self._should_stop()
-        else:
-            def stop():
-                self._should_stop_run += 1
-                return self.stop_event.is_set() or self._should_stop_run > max_nodes
+            # Aucun coup légal (mat ou pat) : `bestmove 0000` est la réponse UCI attendue.
+            if board.is_game_over(claim_draw=False) and board.legal_moves.count() == 0:
+                self._emit(chess.Move.null(), None)
+                return
 
-        self._should_stop_run = 0
-        self.mcts.run(board, max_nodes=max_nodes if max_nodes else 1_000_000_000, should_stop=stop)
+            # Mate immédiat : inutile de lancer un arbre.
+            for move in board.legal_moves:
+                board.push(move)
+                is_mate = board.is_checkmate()
+                board.pop()
+                if is_mate:
+                    self._emit(move, None)
+                    return
 
-        self._report(board)
-        best = self.mcts.best_move()
-        pv = self.mcts.principal_variation()
-        self._emit(best, pv[1] if len(pv) > 1 else None)
+            if max_nodes is None:
+                def stop():
+                    self._should_stop_run += 1
+                    if self._should_stop_run % 200 == 0:
+                        self._report(board)
+                    return self._should_stop()
+            else:
+                def stop():
+                    # `>=` et non `>` : on veut EXACTEMENT max_nodes simulations, et
+                    # l'arrêt ne doit pas se déclencher avant la première.
+                    if self._should_stop_run >= max_nodes:
+                        return True
+                    self._should_stop_run += 1
+                    return self.stop_event.is_set()
+
+            self._should_stop_run = 0
+            self.mcts.run(board, max_nodes=max_nodes if max_nodes else 1_000_000_000, should_stop=stop)
+
+            self._report(board)
+
+            if self.mcts.root is None or not self.mcts.root.children:
+                self._emit(chess.Move.null(), None)
+                return
+
+            best = self.mcts.best_move()
+            pv = self.mcts.principal_variation()
+            self._emit(best, pv[1] if len(pv) > 1 else None)
+
+        except Exception as e:  # noqa: BLE001
+            # On ne laisse jamais lichess-bot sans réponse.
+            print(f"info string search error: {type(e).__name__}: {e}", flush=True)
+            fallback = next(iter(board.legal_moves), chess.Move.null())
+            self._emit(fallback, None)
 
     def _emit(self, move: chess.Move, ponder: Optional[chess.Move]):
         out = f"bestmove {move.uci()}"

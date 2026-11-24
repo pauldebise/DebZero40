@@ -1,342 +1,210 @@
-import sys
+"""
+Point d'entrée UCI du moteur DebZero40.
+
+Le protocole est géré ici ; la recherche vit dans `src/engine/search.py`
+(qui s'appuie sur `src/engine/mcts_core.py`). Tout reste en Python.
+
+Compatibilité : options `Threads`, `NetPath`, `SyzygyPath`, `Ponder` et le
+comportement `position` / `go` / `stop` / `ponderhit` restent ceux attendus par
+lichess-bot et les interfaces UCI standard.
+"""
 import os
-import threading
-from time import perf_counter
+import sys
+
 import chess
-from src.engine.mcts_multithreaded import MctsGraph as MctsGraphMultiThreaded
-from src.engine.mcts_singlethreaded import MctsGraph as MctsGraphSingleThreaded
+
+from src.engine.search import Search
 from src.utils.net_wrapper import NetWrapper
 
 
 def get_absolute_path(relative_path):
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         base_path = os.path.dirname(sys.executable)
     else:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
 
-def time_scheduler(side_to_move: bool, wtime=None, btime=None, winc=None, binc=None, movestogo=0, movetime=None, default=3, nodes=None):
-    if movetime:
-        return movetime / 1000.0
+DEFAULT_NET = "run_6_64_2_fp32.onnx"
 
-    if side_to_move == chess.WHITE:
-        our_time = wtime if wtime is not None else 0
-        our_inc = winc if winc is not None else 0
-    else:
-        our_time = btime if btime is not None else 0
-        our_inc = binc if binc is not None else 0
 
-    if our_time == 0:
-        if nodes == 0:
-            return default
-        else:
-            return float("inf")
-
-    if movestogo > 0:
-        t = our_time / movestogo + our_inc
-    else:
-        t = our_time / 20 + our_inc / 2
-
-    t_sec = max(t / 1000 - 0.2, 0.1)
-    return t_sec
-
-def parse_go_params(command_list, board):
+def parse_go_params(command_list):
+    """Analyse une commande `go ...` en dictionnaire de paramètres."""
     params = {
-        'wtime': None, 'btime': None, 'winc': 0, 'binc': 0,
-        'movestogo': 0, 'movetime': None, 'ponder': False,
-        'moves': [], 'nodes': None
+        "wtime": None, "btime": None, "winc": 0, "binc": 0,
+        "movestogo": 0, "movetime": None, "ponder": False,
+        "nodes": None, "searchmoves": None,
     }
 
     it = iter(command_list[1:])
     for arg in it:
-        if arg in params and arg != 'ponder' and arg != 'moves':
-            params[arg] = int(next(it))
-        elif arg == 'ponder':
-            params['ponder'] = True
-        elif arg == 'movetime':
-            params['movetime'] = int(next(it))
-        elif arg == 'searchmoves':
-            search_moves = []
+        if arg == "ponder":
+            params["ponder"] = True
+        elif arg == "moves":
+            break
+        elif arg == "searchmoves":
+            moves = []
+            for move_uci in it:
+                try:
+                    moves.append(chess.Move.from_uci(move_uci))
+                except ValueError:
+                    break
+            params["searchmoves"] = moves
+        elif arg in ("wtime", "btime", "winc", "binc", "movestogo", "movetime", "nodes"):
             try:
-                while True:
-                    move_uci = next(it)
-                    search_moves.append(chess.Move.from_uci(move_uci))
-            except StopIteration:
-                pass
-            params['searchmoves'] = search_moves
+                params[arg] = int(next(it))
+            except (StopIteration, ValueError):
+                break
 
     return params
 
 
-class TimeManager:
-    def __init__(self):
-        self.allocated_time = 1.0
-        self.is_pondering = False
-        self.timer_start = 0.0
-
-
-
-class SearchManager:
-    def __init__(self, engine):
-        self.engine = engine
-        self.search_thread = None
-        self.stop_event = threading.Event()
-        self.time_manager = TimeManager()
-        self.saved_params = {}
-        self.search_board = None
-
-    def _calculate_and_set_time(self, params, board):
-        allocated = time_scheduler(
-            board.turn,
-            wtime=params.get('wtime'),
-            btime=params.get('btime'),
-            winc=params.get('winc'),
-            binc=params.get('binc'),
-            movestogo=params.get('movestogo'),
-            movetime=params.get('movetime'),
-            nodes=params.get('nodes')
-        )
-        self.time_manager.allocated_time = allocated
-
-    def start_search(self, board, params):
-
-        self.stop_event.clear()
-        self.search_board = board.copy()
-        self.saved_params = params
-
-        self.time_manager.timer_start = perf_counter()
-
-        self.time_manager.is_pondering = params.get('ponder', False)
-
-        if not self.time_manager.is_pondering:
-            self._calculate_and_set_time(params, board)
-        else:
-            self.time_manager.allocated_time = float('inf')
-
-        self.search_thread = threading.Thread(
-            target=self._run_search,
-            args=(self.search_board, params)
-        )
-        self.search_thread.start()
-
-    def _run_search(self, board, params):
-
-        best_move, _, pv_line = self.engine.search(
-            board,
-            searchmove=params.get('searchmoves', None),
-            stop_event=self.stop_event,
-            time_manager=self.time_manager,
-            nodes=params.get('nodes', None)
-        )
-
-
-        if best_move is None:
-            return
-
-        ponder_move = pv_line[1] if len(pv_line) >= 2 else None
-
-        res = f"bestmove {best_move.uci()}"
-        if ponder_move:
-            res += f" ponder {ponder_move.uci()}"
-
-        print(res, flush=True)
-
-    def stop_search(self):
-        if self.search_thread and self.search_thread.is_alive():
-            self.stop_event.set()
-            self.search_thread.join()
-
-    def ponderhit(self):
-        if self.time_manager.is_pondering:
-            self.time_manager.is_pondering = False
-            self.time_manager.timer_start = perf_counter()
-            self._calculate_and_set_time(self.saved_params, self.search_board)
-
-
 def position(command_str: str) -> chess.Board:
+    """Construit la board en conservant l'historique (nécessaire pour les répétitions)."""
     args = command_str.split()
+
+    if args and args[0] == "position":
+        args = args[1:]
 
     if not args:
         return chess.Board()
 
-    if args[0] == 'position':
-        args = args[1:]
-
-    if args[0] == 'fen':
-        if 'moves' in args:
-            moves_idx = args.index('moves')
-            fen_parts = args[1:moves_idx]
+    if args[0] == "fen":
+        if "moves" in args:
+            moves_idx = args.index("moves")
+            fen = " ".join(args[1:moves_idx])
         else:
-            fen_parts = args[1:]
-
-        fen = " ".join(fen_parts)
+            fen = " ".join(args[1:])
         try:
             board = chess.Board(fen)
         except ValueError:
             board = chess.Board()
-
-    elif args[0] == 'startpos':
-        board = chess.Board()
     else:
         board = chess.Board()
 
-    if 'moves' in args:
-        moves_idx = args.index('moves')
-        move_list = args[moves_idx + 1:]
-
-        for move_uci in move_list:
+    if "moves" in args:
+        moves_idx = args.index("moves")
+        for move_uci in args[moves_idx + 1:]:
             try:
                 move = chess.Move.from_uci(move_uci)
-                if move in board.legal_moves:
-                    board.push(move)
-                else:
-                    pass
             except ValueError:
-                pass
+                continue
+            if move in board.legal_moves:
+                board.push(move)
 
     return board
 
 
-def uci():
+def uci_header():
     print("id name DebZero40", flush=True)
     print("id author Paul Debise", flush=True)
     print("option name Ponder type check default false")
-    print("option name Threads type spin default 16 min 1 max 128")
-    print("option name NetPath type string default run_6_64_2_fp32.onnx")
+    print("option name Threads type spin default 1 min 1 max 64")
+    print(f"option name NetPath type string default {DEFAULT_NET}")
     print("option name SyzygyPath type string default <empty>")
     print("uciok", flush=True)
 
-def isready():
-    print("readyok", flush=True)
+
+def load_net(netpath: str) -> NetWrapper:
+    return NetWrapper(get_absolute_path(netpath), cpu=True)
 
 
-if __name__ == '__main__':
-    state_board = chess.Board()
-    netpath = r"run_6_64_2_fp32.onnx"
-    model_path = get_absolute_path(netpath)
-
+def main():
+    netpath = DEFAULT_NET
     try:
-        net = NetWrapper(model_path, cpu = True, temperature=1.5)
-    except Exception as e:
+        net = load_net(netpath)
+    except Exception as e:  # noqa: BLE001
         print("--------------------------------------------------")
-        print(f""
-              f"Fatal error encountered during start :")
+        print("Fatal error encountered during start :")
         print(e)
         print("--------------------------------------------------")
-        print(f"The engine searches for the nets here : {model_path}")
+        print(f"The engine searches for the nets here : {get_absolute_path(netpath)}")
         print("Please check if nets are correctly placed.")
-        print("The default net is run_6_64_2_fp32.onnx, it has to be correctly placed to start the engine.")
         print("--------------------------------------------------")
-        input("Press enter to quit...")
         sys.exit(1)
 
-    current_threads = 16
     current_syzygy_path = None
-
-
-    def create_engine(network, thread_count, syzygy_path):
-        if thread_count == 1:
-            return MctsGraphSingleThreaded(network, syzygy_path=syzygy_path)
-        else:
-            return MctsGraphMultiThreaded(network, num_threads=thread_count, syzygy_path=syzygy_path)
-
-
-
-    engine = create_engine(net, current_threads, current_syzygy_path)
-    search_manager = SearchManager(engine)
-
+    search = Search(net, threads=1, syzygy_path=current_syzygy_path)
+    state_board = chess.Board()
 
     while True:
         try:
             command = input()
-            if not command: continue
-        except EOFError:
+        except (EOFError, KeyboardInterrupt):
+            search.stop_search()
             break
 
-        command_list = command.split(" ")
-        cmd = command_list[0]
+        if not command.strip():
+            continue
+
+        cmd = command.split(" ")[0]
 
         if cmd == "uci":
-            uci()
-        elif cmd == "setoption":
-            if 'name' in command_list and 'value' in command_list:
-                try:
-                    name_idx = command_list.index('name')
-                    val_idx = command_list.index('value')
-
-                    opt_name = command_list[name_idx + 1].lower()
-                    opt_val = " ".join(command_list[val_idx + 1:])
-
-                    if opt_name == "threads":
-                        new_count = int(opt_val)
-                        if new_count != current_threads:
-                            search_manager.stop_search()
-                            current_threads = new_count
-                            engine = create_engine(net, current_threads, current_syzygy_path)
-                            search_manager.engine = engine
-                            if hasattr(engine, 'node_table'): engine.node_table.clear()
-                            print(f"info string Engine switched to {current_threads} threads", flush=True)
-
-                    elif opt_name == "syzygypath":
-                        new_path = opt_val
-                        if new_path == "<empty>": new_path = None
-
-                        if new_path != current_syzygy_path:
-                            search_manager.stop_search()
-                            current_syzygy_path = new_path
-                            engine = create_engine(net, current_threads, current_syzygy_path)
-                            search_manager.engine = engine
-                            if hasattr(engine, 'node_table'): engine.node_table.clear()
-                            print(f"info string Syzygy path set to: {current_syzygy_path}", flush=True)
-
-                    elif opt_name == "netpath":
-
-                        new_path = opt_val
-                        if new_path == "<empty>": new_path = None
-
-                        if new_path != netpath:
-                            search_manager.stop_search()
-
-                            try:
-                                netpath = new_path
-                                model_path = get_absolute_path(netpath)
-                                net = NetWrapper(model_path, cpu=True, temperature=1.5)
-                                engine = create_engine(net, current_threads, current_syzygy_path)
-                                print(f"info string Successfully loaded net from {netpath}", flush=True)
-                            except Exception as e:
-                                print(f"info string Failed to load net from {netpath}", flush=True)
-                                print(f"info string Error : {e}", flush=True)
-
-                        pass
-
-                except ValueError:
-                    pass
+            uci_header()
 
         elif cmd == "isready":
-            isready()
+            print("readyok", flush=True)
+
+        elif cmd == "setoption":
+            parts = command.split()
+            try:
+                name = parts[parts.index("name") + 1].lower()
+                value = " ".join(parts[parts.index("value") + 1:]) if "value" in parts else ""
+            except (ValueError, IndexError):
+                continue
+
+            if name == "netpath":
+                if value and value not in ("<empty>", netpath):
+                    search.stop_search()
+                    try:
+                        net = load_net(value)
+                        netpath = value
+                        search = Search(net, syzygy_path=current_syzygy_path)
+                        print(f"info string Successfully loaded net from {value}", flush=True)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"info string Failed to load net from {value}: {e}", flush=True)
+
+            elif name == "syzygypath":
+                new_path = None if value in ("", "<empty>") else value
+                if new_path != current_syzygy_path:
+                    search.stop_search()
+                    current_syzygy_path = new_path
+                    search = Search(net, syzygy_path=new_path)
+
+            elif name == "threads":
+                # Conservé pour la compatibilité : le moteur est mono-thread par conception
+                # (le MCTS en pur Python se parallélise mal à cause du GIL).
+                try:
+                    requested = int(value)
+                except ValueError:
+                    requested = 1
+                if requested != 1:
+                    print("info string DebZero searches on a single thread (Python GIL)", flush=True)
 
         elif cmd == "ucinewgame":
+            search.stop_search()
             state_board = chess.Board()
-            engine.root_node = None
+            if search.evaluator is not None:
+                search.evaluator.clear()
 
         elif cmd == "position":
-            search_manager.stop_search()
+            search.stop_search()
             state_board = position(command)
-            engine.node_table.clear()
-            engine.root = None
 
         elif cmd == "go":
-            engine.node_table.clear()
-            params = parse_go_params(command_list, state_board)
-            search_manager.start_search(state_board, params)
+            params = parse_go_params(command.split(" "))
+            search.start(state_board, params)
 
         elif cmd == "stop":
-            search_manager.stop_search()
+            search.stop_search()
 
         elif cmd == "ponderhit":
-            search_manager.ponderhit()
+            search.ponderhit()
 
-        elif cmd in ["quit", "exit"]:
-            search_manager.stop_search()
+        elif cmd in ("quit", "exit"):
+            search.stop_search()
             break
+
+
+if __name__ == "__main__":
+    main()
