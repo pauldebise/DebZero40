@@ -71,6 +71,9 @@ class NetWrapper:
                 )
             self.input_planes = shape[-1]
 
+        # Les réseaux v2 demandent une seconde entrée `legal_mask` (1858 valeurs).
+        self.uses_legal_mask = any(inp.name == "legal_mask" for inp in ort_session.get_inputs())
+
         return ort_session, input_name, target_dtype
 
     def _apply_temperature_and_normalize(self, move_probs, temp):
@@ -124,7 +127,21 @@ class NetWrapper:
         encoded = encoded.astype(self.target_type, copy=False)[None]
 
         t_start = perf_counter()
-        outputs = self.session.run(None, {self.input_name: encoded})
+        feed = {self.input_name: encoded}
+
+        # Réseaux entraînés avec le masque de légalité : il faut fournir les 1858 indices
+        # des coups jouables. C'est ce qui garantit 100 % de masse sur les coups légaux.
+        legal_mask = None
+        if self.uses_legal_mask:
+            legal_mask = np.zeros((1, 1858), dtype=self.target_type)
+            for move in board.legal_moves:
+                uci = move.uci() if not black else _mirror_uci(move)
+                idx = self.fm.get_move_index(uci)
+                if idx is not None:
+                    legal_mask[0, idx] = 1
+            feed["legal_mask"] = legal_mask
+
+        outputs = self.session.run(None, feed)
         t_end = perf_counter()
 
         policy = outputs[0].reshape(1858)
