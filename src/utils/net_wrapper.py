@@ -1,7 +1,7 @@
 import onnxruntime as ort
 import chess
 from time import perf_counter
-from src.utils.board_encoder import fen_to_planes_int8
+from src.utils.board_encoder import board_to_planes_int8, fen_to_planes_int8
 import numpy as np
 from src.utils.mapping_out_1858 import FlatMapper
 
@@ -10,6 +10,22 @@ def mirror_move(move: chess.Move) -> chess.Move:
     from_square = chess.square_mirror(move.from_square)
     to_square = chess.square_mirror(move.to_square)
     return chess.Move(from_square, to_square, promotion=move.promotion)
+
+
+# Cache des UCI miroir : calculé une seule fois par couple (from, to, promotion).
+_MIRROR_UCI_CACHE = {}
+
+
+def _mirror_uci(move: chess.Move) -> str:
+    """UCI du coup vu depuis le côté noir (l'index 1858 ne connaît que les coups blancs)."""
+    key = move
+    cached = _MIRROR_UCI_CACHE.get(key)
+    if cached is not None:
+        return cached
+    uci = mirror_move(move).uci()
+    _MIRROR_UCI_CACHE[key] = uci
+    return uci
+
 
 class NetWrapper:
 
@@ -73,43 +89,44 @@ class NetWrapper:
         return self.temperature
 
     def inference(self, board):
+        """Policy (probabilité par coup) et WDL pour `board`, du point de vue du trait.
 
-        if board.turn == chess.WHITE:
-            board_to_encode = board
-        else:
-            board_to_encode = board.mirror()
+        Version rapide : pas de FEN intermédiaire, pas d'objet board miroir reconstruit.
+        Le miroir noir est traité par l'encodage (case + canal) et par la conversion
+        des coups, ce qui évite `board.mirror()` et ses allocations à chaque nœud.
 
-        encoded_board = fen_to_planes_int8(board_to_encode.fen()).astype(self.target_type)
-        encoded_board = np.expand_dims(encoded_board, 0)
+        La température n'est plus appliquée ici : aplatir la policy à l'inférence dégrade
+        la prior du MCTS. Le `temperature` du constructeur reste accepté mais n'est plus
+        utilisé que par `inference_with_temperature` (usage auto-jeu).
+        """
+        black = board.turn == chess.BLACK
+
+        encoded = board_to_planes_int8(board)
+        # Pas de miroir ni de rotation : `board_to_planes_int8` retourne déjà la vue du
+        # côté au trait (il inverse la rangée quand c'est aux noirs de jouer), et les canaux
+        # 0..5 / 6..11 sont rangés par « mes pièces / ses pièces ». C'est exactement ce que
+        # faisait l'ancien chemin `board.mirror()` + FEN — vérifié par
+        # bench/test_inference_equivalence.py (écart nul blancs ET noirs).
+        encoded = encoded.astype(self.target_type, copy=False)[None]
 
         t_start = perf_counter()
-
-        outputs = self.session.run(None, {self.input_name: encoded_board})
-
+        outputs = self.session.run(None, {self.input_name: encoded})
         t_end = perf_counter()
 
-        output_0 = outputs[0]
-        output_1 = outputs[1]
+        policy = outputs[0].reshape(1858)
+        wdl = outputs[1].reshape(3)
 
-        policy_arr = output_0
-        wdl_arr = output_1
+        # Coups de la board telle qu'encodée (côté au trait = blanc après retournement) :
+        # on reste sur la board réelle et on convertit l'index de chaque coup jouable.
+        get_index = self.fm.get_move_index
 
-        policy = policy_arr.reshape(1858)
-        wdl = wdl_arr.reshape(3)
-
-        move_list = list(board_to_encode.legal_moves)
         proba_moves = []
-
-        for move in move_list:
-            move_index = self.fm.get_move_index(move.uci())
-            move_probability = policy[move_index]
-            proba_moves.append((move_probability, move))
-
-        current_temp = self._get_dynamic_temperature(board)
-        proba_moves = self._apply_temperature_and_normalize(proba_moves, current_temp)
-
-        if board.turn == chess.BLACK:
-            proba_moves = [(p, mirror_move(m)) for (p, m) in proba_moves]
+        for move in board.legal_moves:
+            uci = move.uci() if not black else _mirror_uci(move)
+            idx = get_index(uci)
+            if idx is None:
+                continue
+            proba_moves.append((float(policy[idx]), move))
 
         return proba_moves, wdl, t_end - t_start
 

@@ -4,3 +4,8 @@
 .uci.build/
 .uci.dist/
 __pycache__/
+
+.ref_baseline/
+__pycache__/
+*.pyc
+.pytest_cache/
