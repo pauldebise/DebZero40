@@ -1,7 +1,9 @@
 import onnxruntime as ort
 import chess
 from time import perf_counter
-from src.utils.board_encoder import board_to_planes_int8, fen_to_planes_int8
+from src.utils.board_encoder import (
+    board_to_planes_int8, fen_to_planes_int8, PIECE_PLANES, TOTAL_PLANES,
+)
 import numpy as np
 from src.utils.mapping_out_1858 import FlatMapper
 
@@ -57,6 +59,18 @@ class NetWrapper:
         else:
             target_dtype = np.float32
 
+        # Nombre de plans attendus en entrée : 12 pour les réseaux existants, 17 pour les
+        # réseaux réentraînés avec les droits de roque et la case de prise en passant.
+        self.input_planes = PIECE_PLANES
+        shape = getattr(input_meta, "shape", None) or []
+        if len(shape) == 4 and isinstance(shape[-1], int):
+            if shape[-1] not in (PIECE_PLANES, TOTAL_PLANES):
+                raise ValueError(
+                    f"le réseau attend {shape[-1]} plans en entrée, "
+                    f"seules les formes {PIECE_PLANES} et {TOTAL_PLANES} sont gérées"
+                )
+            self.input_planes = shape[-1]
+
         return ort_session, input_name, target_dtype
 
     def _apply_temperature_and_normalize(self, move_probs, temp):
@@ -101,7 +115,7 @@ class NetWrapper:
         """
         black = board.turn == chess.BLACK
 
-        encoded = board_to_planes_int8(board)
+        encoded = board_to_planes_int8(board, extended=self.input_planes == TOTAL_PLANES)
         # Pas de miroir ni de rotation : `board_to_planes_int8` retourne déjà la vue du
         # côté au trait (il inverse la rangée quand c'est aux noirs de jouer), et les canaux
         # 0..5 / 6..11 sont rangés par « mes pièces / ses pièces ». C'est exactement ce que
