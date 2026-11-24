@@ -40,8 +40,37 @@ faite sur le VPS est bruitée. Pour un chiffre fiable, mesurer sur un pod Runpod
 La température doit s'appliquer au **choix du coup** pendant l'auto-jeu, pas à la
 probabilité transmise à la recherche. La recherche utilise maintenant la policy brute.
 
-## 5. Le champ `Threads` de l'UCI
+## 6. L'encodage ne contient pas les droits de roque : défaut majeur prouvé
 
-Défaut à 16 alors que le conteneur a 2 vCPU. Le MCTS actuel crée un thread de batch et
-`num_threads` workers qui se disputent le GIL : au-delà de 2-3 threads, la vitesse baisse.
-Aligné sur le nombre de cœurs réellement disponibles.
+Preuve : trois positions au **plateau identique** mais aux droits de roque différents
+(`KQkq`, `-`, `Kkq`) produisent des sorties réseau **bit-à-bit identiques**.
+`board_to_planes_int8` n'encode que les 12 plans de pièces.
+
+Conséquence mesurée sur `N1_10x64`, position `r3k2r/8/8/8/8/8/8/R3K2R w KQkq` :
+
+| Mesure | Valeur |
+|---|---|
+| probabilité cumulée des deux roques | **0,0185 %** |
+| prior « uniforme » si le réseau ne savait rien | 7,7 % (2 coups sur 26) |
+
+Le réseau est donc bien plus bas que le hasard sur le roque : il a appris à **éviter** les
+coups dont il ne peut pas vérifier la légalité (même situation pour `e1a1` joué à 35 % dans
+une position où le grand roque est impossible : 35 % de la masse policy part sur un coup
+illégal).
+
+C'est le défaut le plus coûteux du moteur. Deux remèdes, de coût très différent :
+
+- **Sans réentraîner (immédiat)** : le problème n'est pas que le MCTS reçoive des coups
+  illégaux (il ne les joue jamais), c'est que le softmax du réseau a déjà consommé 35 % de
+  sa masse sur des coups impossibles, et que le roque est plombé. On corrige donc :
+  normalisation de la prior sur les coups légaux **avant** d'envoyer au MCTS (déjà fait),
+  et surtout réentraînement avec le bon encodage pour réapprendre le roque.
+- **Avec réentraînement (la vraie solution)** : ajouter les 5 plans roque/EP permet au
+  réseau de savoir que le roque est disponible et de lui redonner une prior correcte.
+
+## 7. Conclusion pour le prochain réseau
+
+Le vrai correctif est l'encodage 17 canaux **au moment de l'entraînement**, sur les
+données `ChessFENS` qui contiennent déjà les `-1` de légalité. À l'inférence, les plans
+supplémentaires à zéro reproduisent exactement le comportement des anciens réseaux, donc
+la compatibilité est assurée.
