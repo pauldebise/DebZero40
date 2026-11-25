@@ -69,24 +69,41 @@ par fichier parquet). Le fichier `data/parquet_files/where_to_find_parquet_files
 Colonnes : `fen`, `wdl`, `policy` (1858, **-1 sur les coups illégaux**),
 `game_winner`. Chaque position est vue **du point de vue des blancs**.
 
-### Ce que ça implique
+### Correction : la colonne `wdl` n'est PAS le résultat de la partie
 
-**Le masque de légalité existe déjà dans les données** : les `-1` donnent gratuitement les
-coups légaux et le bon index 1858. Le Levier B (apprendre la légalité) peut donc être
-implémenté sans coût d'annotation. À l'inférence, il suffit de sortir des logits, de les
-masquer, puis de normaliser ; le MCTS retrouve une prior de qualité.
+Mesuré sur 100 000 positions réelles :
 
-**Mais les WDL viennent du résultat de la partie**, pas d'une recherche. C'est la limite
-de fond : le réseau apprend « qui a gagné la partie », pas « quelle est la valeur de
-cette position ». Le `game_winner` d'une position où un joueur a déjà gagné vaut toujours
-la même chose, quelle que soit la suite — d'où les évaluations incohérentes observées en
-fin de partie (dame en prise jugée +0,30 pour le camp qui la perd).
+| Contrôle | Résultat |
+|---|---|
+| positions où `wdl` est quasi binaire (max > 0,95) | 16,5 % seulement |
+| accord `argmax(wdl)` avec le gagnant de la partie | 67,5 % (33 % au hasard) |
+| corrélation matériel / P(les blancs gagnent) | 0,558 |
+| avec ≥ 8 points de matériel d'avance, P(gain du camp en avance) | **0,974** |
+| dispersion de `wdl` à matériel équilibré | de 0,0 à 0,992 |
 
-**Les positions ne sont pas toutes issues du départ réel** : la FEN est donnée avec
-`w - - 23 1` ou `w K - 2 1`, c'est-à-dire sans l'historique. Conséquence directe sur
-notre moteur : la répétition triple est **non détectable** depuis le dataset, donc la
-policy n'a jamais appris à éviter une nulle par répétition. C'est un argument pour que le
-moteur compense côté recherche (ce qui est fait).
+Conclusion : `wdl` est une **vraie évaluation de position** (elle respecte fortement le
+matériel tout en capturant plus que lui), et `game_winner` est séparément le résultat de la
+partie. La cible de valeur est donc utilisable — c'est une bonne nouvelle par rapport à ce
+que j'avais écrit le 24 novembre.
+
+### Point à vérifier avant un gros run
+
+À matériel équilibré, la moyenne de P(les blancs gagnent) vaut **0,239**, pas 0,5. Le dataset
+est massivement filtré sur les positions à matériel équilibré (2 235 positions sur 3 000), donc
+ce n'est pas un artefact d'échantillonnage : il y a un biais systématique. Hypothèse la plus
+probable : le dataset contient des positions miroir de positions « noirs au trait », et le `wdl`
+n'a peut-être pas été retourné en même temps que la FEN. Si c'est le cas, une partie des labels
+de valeur est du bruit, voire pire.
+
+**À faire avant tout entraînement sérieux** : comparer la distribution de `wdl` entre positions
+d'origine et positions miroir (par exemple via les droits de roque `K` vs `k`), et corriger ou
+filtrer en conséquence. Un script de contrôle est à écrire ; sans lui, on risque d'entraîner une
+tête de valeur sur des étiquettes incohérentes.
+
+### Le masque de légalité existe déjà dans les données
+
+Les `-1` donnent gratuitement les coups légaux et le bon index 1858. À l'inférence, il suffit
+de sortir des logits, de les masquer, puis de normaliser.
 
 ### Ordre recommandé
 
@@ -110,17 +127,67 @@ moteur compense côté recherche (ce qui est fait).
 | Nouveau réseau | A/B contre l'ancien, même budget de nœuds | score > 55 % sur 100 parties |
 | Moteur complet | nps sur le VPS | > 300 |
 
-## 5. Test Runpod à budget maîtrisé (≤ 3 $)
+## 5. Coûts mesurés (RTX 4090 à 0,89 $/h)
 
-But : vérifier que le pipeline d'entraînement tourne avec le nouvel encodage, **pas** de
-produire un réseau fort.
+Débits relevés le 25 novembre sur un pod réel, code PyTorch équivalent à l'architecture
+existante, données réelles :
 
-- GPU : RTX 4090 (~0,7 $/h) ou A40. Pas de H100.
-- Durée cible : **2 h maximum** (~1,5 $), plus le stockage réseau.
-- Run : quelques milliers de pas seulement, sur un sous-ensemble des données.
-- Livrables : courbes de loss, masse légale, et un `.keras` exportable en ONNX.
-- Garde-fou : arrêt automatique à 2 h (timeout script) et vérification du coût en fin de
-  session via l'API Runpod.
+| Réseau | Débit d'entraînement | Passage complet sur 732 M positions |
+|---|---|---|
+| 6×64 (0,98 M params) | **82 600 pos/s** (lot 2048, fp16) | **3,70 $** |
+| 8×96 | 33 800 pos/s | 5,36 $ |
+| 10×128 (4,04 M params) | 30 000 pos/s | 6,02 $ |
+| 12×128 (4,64 M params) | 13 100 pos/s | 13,81 $ |
+| 15×256 (20 M params) | 5 550 pos/s | 32,58 $ |
 
-À ne lancer qu'après validation du point 3 (nature des données). Le budget sera annoncé
-avant lancement, avec le coût estimé écrit noir sur blanc.
+Le **chargement des données** plafonne à 49 000 positions/s avec 8 cœurs (14 500 par cœur
+pour la conversion FEN → plans). Au-delà de 8 processus, le multitraitement régresse.
+
+Scénarios réalistes :
+
+| Scénario | Coût mesuré |
+|---|---|
+| 20 M positions, conversion unique + 10 époques en 6×64 | **0,70 $** |
+| 100 M positions, 6×64 | 0,51 $ |
+| 100 M positions, 10×128 | 0,82 $ |
+| Évaluation A/B de 100 parties (600 nœuds, 8 en parallèle) | 1,07 $ |
+| Auto-jeu : 10 000 parties à 800 nœuds sur 16 vCPU | ~71 $ |
+
+**Conclusion** : l'entraînement supervisé n'est pas le poste de coût. Générer des données
+par auto-jeu coûte 20 à 100 fois plus cher que de consommer un dataset existant. Toute la
+stratégie doit donc rester supervisée tant que le budget est de l'ordre de quelques dollars.
+
+## 6. Refonte du pipeline proposée
+
+Le pipeline TensorFlow d'origine cumule trois défauts : installation lourde, conflits de
+versions (TF 2.17 refuse numpy 2 ; il faut `tf2onnx` et `tensorflow[and-cuda]` pour le GPU),
+et alimentation inefficace (lot 256, pas de précision mixte).
+
+Remplacer par PyTorch, mesuré sur le pod :
+
+- **PyTorch est déjà installé** sur les images Runpod : aucun téléchargement de 3 Go, aucun
+  conflit de versions. C'est ce qui a fait perdre 40 minutes hier.
+- Même architecture, mêmes conventions d'entrée NHWC, export ONNX natif par
+  `torch.onnx.export` (donc le moteur Python ne change pas d'une ligne).
+- Lot 2048 + précision mixte fp16 : **3 fois plus rapide** que lot 256 fp32.
+- Conversion des données **une seule fois** vers un format binaire compact, puis entraînement
+  de plusieurs époques depuis ce cache, au lieu de reconvertir à chaque époque.
+
+## 7. Protocole d'un premier vrai run (budget 3 $)
+
+Ordre proposé, chaque étape validée avant la suivante :
+
+1. **Contrôle des labels** (0 $, sur le VPS) : vérifier le biais de `wdl` entre positions
+   d'origine et positions miroir. Si le biais est confirmé, filtrer. Aucun entraînement
+   sérieux avant ce contrôle.
+2. **Run de référence 6×64** sur 20 M positions, 10 époques : ~0,70 $. But : avoir une
+   courbe de perte propre et un réseau exportable, pas encore la force.
+3. **Run 10×128** sur les mêmes 20 M positions : ~0,80 $. Comparer les deux en validation
+   (perte de policy et de valeur), pas en parties.
+4. **Évaluation A/B** du meilleur des deux contre l'ancien réseau, 100 à 200 parties à
+   budget de nœuds égal : ~1,07 $ à 2,15 $.
+5. Total : **2,5 à 3 $**, soit moins que le solde actuel (4,22 $).
+
+Garde-fous systématiques : coupe-circuit par `sleep` + suppression du pod avant de commencer,
+pod supprimé et solde relu en fin de session, aucun volume réseau permanent (le stockage coûte
+plus cher que le calcul pour un run d'une heure).
