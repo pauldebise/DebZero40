@@ -247,9 +247,67 @@ def collate_shard_batch(batch: Iterable[Tuple[torch.Tensor, ...]]):
     return xs, masks, target, wdl
 
 
+class ShardBatchSampler:
+    """Lot d'indices groupés par shard : shards mélangés, lignes mélangées dedans.
+
+    Un échantillonneur global oblige le dataset à garder **tous** les shards ouverts
+    ou en cache : au-delà de quelques centaines de shards, la RAM explose (24 M de
+    positions ≈ 50 Go de tenseurs) et la lecture disque devient aléatoire. Ici la
+    mémoire reste bornée à un shard et le disque lit en séquence, pour un mélange
+    équivalent en pratique.
+    """
+
+    def __init__(
+        self,
+        shard_lengths: Sequence[int],
+        batch_size: int,
+        shuffle: bool = True,
+        seed: int = 0,
+        drop_last: bool = False,
+    ) -> None:
+        self.shard_lengths = [int(n) for n in shard_lengths]
+        self.batch_size = int(batch_size)
+        self.shuffle = bool(shuffle)
+        self.seed = int(seed)
+        self.drop_last = bool(drop_last)
+        self.epoch = 0
+
+        self.offsets: List[int] = []
+        total = 0
+        for n in self.shard_lengths:
+            self.offsets.append(total)
+            total += n
+
+    def __len__(self) -> int:
+        total = 0
+        for n in self.shard_lengths:
+            if self.drop_last:
+                total += n // self.batch_size
+            else:
+                total += -(-n // self.batch_size)
+        return total
+
+    def __iter__(self):
+        rng = np.random.default_rng(self.seed + self.epoch)
+        order = rng.permutation(len(self.shard_lengths)) if self.shuffle else range(
+            len(self.shard_lengths)
+        )
+        for shard in order:
+            base = self.offsets[int(shard)]
+            n = self.shard_lengths[int(shard)]
+            rows = rng.permutation(n) if self.shuffle else np.arange(n)
+            for start in range(0, n, self.batch_size):
+                chunk = rows[start : start + self.batch_size]
+                if self.drop_last and len(chunk) < self.batch_size:
+                    continue
+                yield (base + chunk).tolist()
+        self.epoch += 1
+
+
 __all__ = [
     "MAX_MOVES",
     "POLICY_SIZE",
+    "ShardBatchSampler",
     "ShardDataset",
     "collate_shard_batch",
     "find_shards",

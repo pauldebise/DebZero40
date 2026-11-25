@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import math
 import os
 import random
@@ -20,7 +21,12 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.model.nets import POLICY_SIZE, VARIANT_SPECS, build_net
-from src.train.dataset import ShardDataset, collate_shard_batch, find_shards
+from src.train.dataset import (
+    ShardBatchSampler,
+    ShardDataset,
+    collate_shard_batch,
+    find_shards,
+)
 
 
 # --------------------------------------------------------------------------- utils
@@ -80,9 +86,28 @@ def build_loader(
     workers: int,
     seed: int,
     device: torch.device,
+    shard_local: bool = False,
 ) -> DataLoader:
+    """Construit le ``DataLoader`` d'entraînement.
+
+    ``shard_local=True`` regroupe les indices par shard : les shards sont mélangés
+    entre eux et les lignes mélangées à l'intérieur de chacun. La mémoire ne garde
+    alors qu'un shard (65 Mo) au lieu du jeu de données complet — indispensable dès
+    que les shards dépassent la RAM du pod, et le disque lit en séquence.
+    """
     generator = torch.Generator()
     generator.manual_seed(seed)
+    if shard_local:
+        sampler = ShardBatchSampler(
+            dataset.shard_lengths, batch_size, shuffle=shuffle, seed=seed
+        )
+        return DataLoader(
+            dataset,
+            batch_sampler=sampler,
+            num_workers=0,
+            collate_fn=collate_shard_batch,
+            pin_memory=device.type == "cuda",
+        )
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -94,9 +119,6 @@ def build_loader(
         generator=generator,
         persistent_workers=workers > 0,
     )
-
-
-# --------------------------------------------------------------------------- pertes
 def compute_losses(
     model: torch.nn.Module,
     x: torch.Tensor,
@@ -263,6 +285,28 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "--smoke", action="store_true", help="20 lots seulement, pour valider la mécanique"
     )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=0,
+        help="arrêt anticipé si la validation ne s'améliore plus pendant N époques (0 = jamais)",
+    )
+    parser.add_argument(
+        "--min-delta",
+        type=float,
+        default=1e-4,
+        help="amélioration minimale de la validation pour compter comme un progrès",
+    )
+    parser.add_argument(
+        "--history",
+        default="",
+        help="fichier JSONL d'historique (défaut : <out>/history.jsonl)",
+    )
+    parser.add_argument(
+        "--shard-local",
+        action="store_true",
+        help="lecture groupée par shard : mémoire bornée, disque séquentiel (gros jeux de données)",
+    )
     return parser.parse_args(argv)
 
 
@@ -294,7 +338,7 @@ def main(argv=None) -> int:
     train_dataset = ShardDataset(train_shards, planes=17)
     train_loader = build_loader(
         train_dataset, args.batch, shuffle=True, workers=args.workers,
-        seed=args.seed, device=device,
+        seed=args.seed, device=device, shard_local=args.shard_local,
     )
 
     val_loader = None
@@ -330,6 +374,10 @@ def main(argv=None) -> int:
         )
 
     os.makedirs(args.out, exist_ok=True)
+    history_path = args.history or os.path.join(args.out, "history.jsonl")
+    if not args.resume and os.path.exists(history_path):
+        os.remove(history_path)
+    bad_epochs = 0
     max_batches = 20 if args.smoke else None
     n_params = sum(p.numel() for p in model.parameters())
     print(f"paramètres: {n_params:,}", flush=True)
@@ -371,6 +419,35 @@ def main(argv=None) -> int:
             "best_val": min(best_val, selection_loss),
             "metrics": {"train": train_metrics, "val": val_metrics},
         }
+
+        # Historique exploitable (courbes) : une ligne JSON par époque.
+        with open(history_path, "a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {
+                        "epoch": epoch + 1,
+                        "lr": lr,
+                        "elapsed_s": round(elapsed, 1),
+                        "train": train_metrics,
+                        "val": val_metrics,
+                    }
+                )
+                + "\n"
+            )
+
+        if selection_loss < best_val - args.min_delta:
+            improved = True
+        else:
+            improved = False
+
+        if improved:
+            bad_epochs = 0
+        elif args.patience:
+            bad_epochs += 1
+            print(
+                f"  -> pas d'amélioration ({bad_epochs}/{args.patience})", flush=True
+            )
+
         if selection_loss < best_val:
             best_val = selection_loss
             checkpoint["best_val"] = best_val
@@ -385,6 +462,14 @@ def main(argv=None) -> int:
         last["scheduler"] = scheduler.state_dict()
         last["args"] = vars(args)
         torch.save(last, os.path.join(args.out, "last.pt"))
+
+        if args.patience and bad_epochs >= args.patience:
+            print(
+                f"arrêt anticipé : validation sans progrès depuis {bad_epochs} époques "
+                f"(meilleure perte {best_val:.4f})",
+                flush=True,
+            )
+            break
 
     return 0
 
