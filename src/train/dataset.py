@@ -99,6 +99,7 @@ class ShardDataset(Dataset):
 
         self._cached_shard: int | None = None
         self._cache: Dict[str, torch.Tensor | int] | None = None
+        self._cache_dict: Dict[int, Dict[str, torch.Tensor | int]] = {}
 
         self._order: np.ndarray | None = None
         if shuffle:
@@ -115,7 +116,13 @@ class ShardDataset(Dataset):
 
     # --------------------------------------------------------------- chargement
     def _load_shard(self, shard_index: int) -> None:
-        if self._cached_shard == shard_index and self._cache is not None:
+        # Cache par shard, SANS éviction : avec un mélange global, un cache à une seule
+        # entrée rechargeait un shard de 65 Mo presque à chaque échantillon (2,6 Go lus
+        # par lot, entraînement bloqué à 0 % d'utilisation GPU).
+        cached = self._cache_dict.get(shard_index)
+        if cached is not None:
+            self._cache = cached
+            self._cached_shard = shard_index
             return
         path = self.shards[shard_index]
         with np.load(path) as data:
@@ -142,6 +149,7 @@ class ShardDataset(Dataset):
             "pol_len": torch.from_numpy(np.ascontiguousarray(pol_len)).long(),
             "wdl": torch.from_numpy(np.ascontiguousarray(wdl)).float(),
         }
+        self._cache_dict[shard_index] = self._cache
         self._cached_shard = shard_index
 
     def _locate(self, index: int) -> Tuple[int, int]:
