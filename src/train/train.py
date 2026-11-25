@@ -104,9 +104,10 @@ def build_loader(
         return DataLoader(
             dataset,
             batch_sampler=sampler,
-            num_workers=0,
+            num_workers=max(0, workers),
             collate_fn=collate_shard_batch,
             pin_memory=device.type == "cuda",
+            persistent_workers=False,
         )
     return DataLoader(
         dataset,
@@ -335,7 +336,9 @@ def main(argv=None) -> int:
         flush=True,
     )
 
-    train_dataset = ShardDataset(train_shards, planes=17)
+    train_dataset = ShardDataset(
+        train_shards, planes=17, max_cached_shards=2 if args.shard_local else None
+    )
     train_loader = build_loader(
         train_dataset, args.batch, shuffle=True, workers=args.workers,
         seed=args.seed, device=device, shard_local=args.shard_local,

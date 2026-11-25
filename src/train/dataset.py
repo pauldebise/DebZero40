@@ -83,6 +83,7 @@ class ShardDataset(Dataset):
         max_moves: int = MAX_MOVES,
         shuffle: bool = False,
         seed: int = 0,
+        max_cached_shards: int | None = None,
     ) -> None:
         self.shards = find_shards(shards)
         self.planes = int(planes)
@@ -100,6 +101,9 @@ class ShardDataset(Dataset):
         self._cached_shard: int | None = None
         self._cache: Dict[str, torch.Tensor | int] | None = None
         self._cache_dict: Dict[int, Dict[str, torch.Tensor | int]] = {}
+        # Cache borné : en lecture groupée par shard un seul suffit, et sans borne
+        # chaque processus de lecture accumulait tout le jeu de données (tué par l'OOM).
+        self.max_cached_shards = max_cached_shards
 
         self._order: np.ndarray | None = None
         if shuffle:
@@ -151,6 +155,14 @@ class ShardDataset(Dataset):
         }
         self._cache_dict[shard_index] = self._cache
         self._cached_shard = shard_index
+        if self.max_cached_shards is not None:
+            while len(self._cache_dict) > max(1, self.max_cached_shards):
+                for key in list(self._cache_dict):
+                    if key != shard_index:
+                        del self._cache_dict[key]
+                        break
+                else:
+                    break
 
     def _locate(self, index: int) -> Tuple[int, int]:
         if index < 0:
