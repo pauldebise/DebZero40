@@ -6,6 +6,7 @@ from src.utils.board_encoder import (
 )
 import numpy as np
 from src.utils.mapping_out_1858 import FlatMapper
+from src.utils.lc0_moves import LC0_MOVE_TO_INDEX
 
 
 def mirror_move(move: chess.Move) -> chess.Move:
@@ -27,6 +28,35 @@ def _mirror_uci(move: chess.Move) -> str:
     uci = mirror_move(move).uci()
     _MIRROR_UCI_CACHE[key] = uci
     return uci
+
+
+def lc0_index_of(board: chess.Board, move: chess.Move) -> int | None:
+    """Index du coup dans l'espace canonique LC0 (1858), ou ``None`` s'il n'y existe pas.
+
+    Trois particularités par rapport à un simple ``move.uci()`` :
+
+    * le roque est encodé comme « le roi prend sa propre tour » (``e1h1`` / ``e1a1``) ;
+    * la sous-promotion en cavalier n'a pas d'entrée dédiée : LC0 utilise la case nue
+      (``a7a8``), les sous-promotions dame/tour/fou ayant leurs propres entrées ;
+    * la table ne contient que des coups blancs : les coups noirs sont miroir-retournés.
+    """
+    black = board.turn == chess.BLACK
+
+    if board.is_castling(move):
+        # `move` est roi -> case de destination ; la tour est sur le même rang.
+        rank = chess.square_rank(move.from_square)
+        rook_file = 7 if chess.square_file(move.to_square) == 6 else 0
+        castling = chess.Move(move.from_square, chess.square(rook_file, rank))
+        uci = _mirror_uci(castling) if black else castling.uci()
+        return LC0_MOVE_TO_INDEX.get(uci)
+
+    if move.promotion == chess.KNIGHT:
+        base = chess.Move(move.from_square, move.to_square)
+        uci = _mirror_uci(base) if black else base.uci()
+        return LC0_MOVE_TO_INDEX.get(uci)
+
+    uci = _mirror_uci(move) if black else move.uci()
+    return LC0_MOVE_TO_INDEX.get(uci)
 
 
 class NetWrapper:
@@ -60,7 +90,7 @@ class NetWrapper:
             target_dtype = np.float32
 
         # Nombre de plans attendus en entrée : 12 pour les réseaux existants, 17 pour les
-        # réseaux réentraînés avec les droits de roque et la case de prise en passant.
+        # réseaux réentraînés (droits de roque + compteur de 50 coups).
         self.input_planes = PIECE_PLANES
         shape = getattr(input_meta, "shape", None) or []
         if len(shape) == 4 and isinstance(shape[-1], int):
@@ -71,8 +101,25 @@ class NetWrapper:
                 )
             self.input_planes = shape[-1]
 
-        # Les réseaux v2 demandent une seconde entrée `legal_mask` (1858 valeurs).
-        self.uses_legal_mask = any(inp.name == "legal_mask" for inp in ort_session.get_inputs())
+        # Les nouveaux réseaux exportés par `src/train/export_onnx.py` demandent une
+        # seconde entrée `legal_mask` (1858 valeurs) et sortent leur policy dans l'espace
+        # canonique LC0. C'est le seul marqueur fiable de l'espace de politique : on ne
+        # se fie PAS au nombre de plans (un réseau 17 plans pourrait réutiliser l'ancienne
+        # liste maison).
+        self.uses_legal_mask = False
+        self.legal_mask_dtype = target_dtype
+        for inp in ort_session.get_inputs():
+            if getattr(inp, "name", None) == "legal_mask":
+                self.uses_legal_mask = True
+                if "float16" in (getattr(inp, "type", "") or ""):
+                    self.legal_mask_dtype = np.float16
+                else:
+                    self.legal_mask_dtype = np.float32
+                break
+
+        # Espace de politique : LC0 dès qu'il y a un masque de légalité, sinon ancienne
+        # liste maison (`FlatMapper`). Alias explicite pour la lisibilité du code moteur.
+        self.uses_lc0 = self.uses_legal_mask
 
         return ort_session, input_name, target_dtype
 
@@ -129,17 +176,27 @@ class NetWrapper:
         t_start = perf_counter()
         feed = {self.input_name: encoded}
 
-        # Réseaux entraînés avec le masque de légalité : il faut fournir les 1858 indices
-        # des coups jouables. C'est ce qui garantit 100 % de masse sur les coups légaux.
-        legal_mask = None
-        if self.uses_legal_mask:
-            legal_mask = np.zeros((1, 1858), dtype=self.target_type)
+        if self.uses_lc0:
+            # Espace canonique LC0 : on calcule une seule fois l'index de chaque coup
+            # légal, puis on s'en sert à la fois pour le masque et pour la lecture de la
+            # policy. Seuls les coups légaux sont renvoyés au MCTS.
+            indexed_moves = []
+            legal_mask = np.zeros((1, 1858), dtype=self.legal_mask_dtype)
+            for move in board.legal_moves:
+                idx = lc0_index_of(board, move)
+                if idx is None:
+                    continue
+                indexed_moves.append((move, idx))
+                legal_mask[0, idx] = 1
+            feed["legal_mask"] = legal_mask
+        else:
+            # Ancienne liste maison : comportement historique inchangé.
+            indexed_moves = []
             for move in board.legal_moves:
                 uci = move.uci() if not black else _mirror_uci(move)
                 idx = self.fm.get_move_index(uci)
                 if idx is not None:
-                    legal_mask[0, idx] = 1
-            feed["legal_mask"] = legal_mask
+                    indexed_moves.append((move, idx))
 
         outputs = self.session.run(None, feed)
         t_end = perf_counter()
@@ -147,17 +204,7 @@ class NetWrapper:
         policy = outputs[0].reshape(1858)
         wdl = outputs[1].reshape(3)
 
-        # Coups de la board telle qu'encodée (côté au trait = blanc après retournement) :
-        # on reste sur la board réelle et on convertit l'index de chaque coup jouable.
-        get_index = self.fm.get_move_index
-
-        proba_moves = []
-        for move in board.legal_moves:
-            uci = move.uci() if not black else _mirror_uci(move)
-            idx = get_index(uci)
-            if idx is None:
-                continue
-            proba_moves.append((float(policy[idx]), move))
+        proba_moves = [(float(policy[idx]), move) for move, idx in indexed_moves]
 
         return proba_moves, wdl, t_end - t_start
 
@@ -167,6 +214,7 @@ class NetWrapper:
             return [], []
 
         batch_planes = []
+        batch_masks = [] if self.uses_legal_mask else None
         meta_data = []
 
         for board in boards:
@@ -179,11 +227,23 @@ class NetWrapper:
 
             meta_data.append((work_board, is_black))
 
-            encoded = fen_to_planes_int8(work_board.fen()).astype(self.target_type)
+            encoded = fen_to_planes_int8(
+                work_board.fen(), extended=self.input_planes == TOTAL_PLANES
+            ).astype(self.target_type)
             batch_planes.append(encoded)
 
-        input_tensor = np.stack(batch_planes)
-        outputs = self.session.run(None, {self.input_name: input_tensor})
+            if batch_masks is not None:
+                mask = np.zeros(1858, dtype=self.legal_mask_dtype)
+                for move in work_board.legal_moves:
+                    idx = lc0_index_of(work_board, move)
+                    if idx is not None:
+                        mask[idx] = 1
+                batch_masks.append(mask)
+
+        feed = {self.input_name: np.stack(batch_planes)}
+        if batch_masks is not None:
+            feed["legal_mask"] = np.stack(batch_masks)
+        outputs = self.session.run(None, feed)
 
         batch_policy_logits = outputs[0]  # Shape (N, 1858)
         batch_wdl = outputs[1]  # Shape (N, 3)
@@ -200,7 +260,12 @@ class NetWrapper:
             proba_moves = []
 
             for move in move_list:
-                move_index = self.fm.get_move_index(move.uci())
+                if self.uses_lc0:
+                    move_index = lc0_index_of(work_board, move)
+                else:
+                    move_index = self.fm.get_move_index(move.uci())
+                if move_index is None:
+                    continue
                 move_probability = float(policy_arr[move_index])
                 proba_moves.append((move_probability, move))
 

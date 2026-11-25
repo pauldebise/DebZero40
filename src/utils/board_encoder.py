@@ -14,32 +14,41 @@ for _pt in range(1, 7):
 
 # Nombre de plans de pièces (historique, réseaux existants) et plans additionnels.
 PIECE_PLANES = 12
-EXTRA_PLANES = 5  # 4 droits de roque + 1 case de prise en passant
+EXTRA_PLANES = 5  # 4 droits de roque + 1 compteur de 50 coups normalisé
 TOTAL_PLANES = PIECE_PLANES + EXTRA_PLANES
 
 
 def board_to_planes_int8(board, extended: bool = False):
-    """Encode une board en plans (8, 8, 12) ou (8, 8, 17) int8.
+    """Encode une board en plans (8, 8, 12) ou (8, 8, 17).
 
     Le plateau est vu du point de vue du joueur au trait : le réseau n'apprend que le
     côté blanc, et les plans sont retournés quand c'est aux noirs de jouer.
 
-    `extended=True` ajoute 5 plans de constantes (canaux 12 à 16), toujours **du point de
-    vue du joueur au trait** :
+    ``extended=False`` conserve **exactement** l'ancien encodage 12 plans (int8), pour
+    rester compatible avec les réseaux déjà entraînés.
+
+    ``extended=True`` produit les 17 plans des nouveaux réseaux (uint8, car le plan 16
+    monte jusqu'à 255). Les canaux 12 à 16 sont, toujours **du point de vue du joueur
+    au trait** :
 
         12 : grand roque encore possible (dame)
         13 : petit roque encore possible (roi)
         14 : grand roque adverse encore possible
         15 : petit roque adverse encore possible
-        16 : case cible de la prise en passant (un seul 1)
+        16 : `round(255 * min(halfmove_clock, 100) / 100)` sur toutes les cases
 
-    Pourquoi c'est indispensable : sans ces plans, deux positions au plateau identique mais
-    aux droits de roque différents produisent EXACTEMENT la même sortie réseau. Mesuré sur
-    N1_10x64 : les roques ne reçoivent que 0,019 % de probabilité dans une position où ils
-    sont les deux meilleurs coups possibles, alors qu'une prior neutre en donnerait 7,7 %.
+    Il n'y a plus de plan de prise en passant : elle était absente des données de
+    distillation LC0 utilisées pour l'entraînement.
+
+    Pourquoi les droits de roque sont indispensables : sans eux, deux positions au
+    plateau identique mais aux droits différents produisent EXACTEMENT la même sortie
+    réseau. Mesuré sur N1_10x64 : les roques ne reçoivent que 0,019 % de probabilité
+    dans une position où ils sont les deux meilleurs coups possibles, alors qu'une
+    prior neutre en donnerait 7,7 %.
     """
     channels = TOTAL_PLANES if extended else PIECE_PLANES
-    planes = np.zeros((8, 8, channels), dtype=np.int8)
+    dtype = np.uint8 if extended else np.int8
+    planes = np.zeros((8, 8, channels), dtype=dtype)
 
     black_turn = board.turn == chess.BLACK
     channel_of = _CHANNEL
@@ -69,11 +78,9 @@ def board_to_planes_int8(board, extended: bool = False):
     if board.has_kingside_castling_rights(their_color):
         planes[:, :, 15] = 1
 
-    if board.ep_square is not None:
-        rank = _RANK[board.ep_square]
-        if black_turn:
-            rank = 7 - rank
-        planes[rank, _FILE[board.ep_square], 16] = 1
+    # --- compteur de 50 coups, normalisé sur 0..255 (même convention que l'entraînement)
+    rule50 = min(int(board.halfmove_clock), 100)
+    planes[:, :, 16] = int(round(255 * rule50 / 100))
 
     return planes
 
