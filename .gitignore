@@ -10,3 +10,5 @@ __pycache__/
 *.pyc
 .pytest_cache/
 nets/v2_test/
+nets/v2_test/
+nets/v2/*_best.pt
