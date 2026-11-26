@@ -1,0 +1,29 @@
+200 parties | 1000 ms/coup | 100 ouvertures jouées deux fois | 10 en parallèle
+  10/200 parties | score candidat 55.0 %
+  20/200 parties | score candidat 52.5 %
+  30/200 parties | score candidat 53.3 %
+  40/200 parties | score candidat 58.8 %
+  50/200 parties | score candidat 60.0 %
+  60/200 parties | score candidat 61.7 %
+  70/200 parties | score candidat 60.0 %
+  80/200 parties | score candidat 58.1 %
+  90/200 parties | score candidat 61.1 %
+  100/200 parties | score candidat 60.0 %
+  110/200 parties | score candidat 61.8 %
+  120/200 parties | score candidat 61.7 %
+  130/200 parties | score candidat 59.6 %
+  140/200 parties | score candidat 61.1 %
+  150/200 parties | score candidat 60.7 %
+  160/200 parties | score candidat 60.6 %
+  170/200 parties | score candidat 60.3 %
+  180/200 parties | score candidat 59.7 %
+  190/200 parties | score candidat 59.5 %
+  200/200 parties | score candidat 59.5 %
+
+=== Résultat ===
+candidat : 87 victoires, 64 nulles, 49 défaites sur 200
+score = 59.5 %  [IC95 : 53.9 % - 65.1 %]
+écart Elo estimé : +67  (IC95 : +27 à +108)
+nœuds par coup : référence 370, candidat 377
+=> le candidat est significativement plus fort
+résultats écrits : /workspace/duel_moteur.json

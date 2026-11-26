@@ -18,7 +18,8 @@ Règles :
 | 26/11 | entraînement nano_ib48 complet, 16 époques, 20 M positions | 1,90 $ | top-1 validation 43,75 %, WDL 82,86 % | +7,75 points de top-1 contre le nano v2 |
 | 26/11 | duel nano v3 contre production, 200 parties, 1 000 ms/coup | 0,60 $ | 77,5 %, +215 Elo [+169 ; +268] | adopté ; l'avantage de nœuds est inchangé (1,83×), donc le gain vient de l'architecture |
 | 26/11 | quantification fp32 / dynamique / statique du nano v3 | 0 $ | 0,48 / 2,69 / 1,39 ms et 43,98 / 29,68 / 5,88 % de top-1 | perdant sur ce processeur (pas de VNNI, convolutions profondes) ; ne pas refaire |
-| 26/11 | profilage et optimisation du moteur (Python) | 0 $ | banc : 1,73 -> 1,29 ms/nœud ; conditions réelles : 572 -> 664 nœuds/s (x1,16) | +16 % de nœuds, une quinzaine d'Elo, pour zéro euro ; le réseau est désormais le poste dominant |
+| 26/11 | profilage et optimisation du moteur (Python) | 0 $ | banc : 1,73 -> 1,29 ms/nœud ; conditions réelles : 572 -> 664 nœuds/s (x1,16) | +16 % de nœuds pour zéro euro ; le réseau est désormais le poste dominant |
+| 26/11 | duel de vérification moteur ancien/nouveau, 200 parties, même réseau | 0,35 $ | 59,5 % [+67 Elo, IC +27/+108], mais 8 % de nœuds en plus seulement et score inversement corrélé à l'avantage de nœuds | gain réel ~+10 Elo ; le duel à 350 nœuds/coup est trop bruité pour trancher, ne pas refaire à cette taille |
 
 ## Ce que ça a coûté jusqu'ici
 

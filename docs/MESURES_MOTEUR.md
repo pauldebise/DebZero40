@@ -70,3 +70,34 @@ chercher la suite (batching, ou réseau plus économe).
   d'entrée propre dans l'espace LC0, elle utilise la case nue.
 - Partie complète via l'interface UCI : le moteur joue, annonce un `bestmove` légal et un
   `ponder` cohérent.
+
+## Duel de vérification
+
+200 parties, même réseau, 1 000 ms par coup, 6 demi-coups d'ouverture, 10 parties en
+parallèle, graine 7. Fichiers : `docs/mesures/duel_moteur.{json,log}`.
+
+| | valeur |
+|---|---|
+| score | 59,5 % (87 V, 64 N, 49 D) |
+| IC 95 % | 53,9 – 65,1 % |
+| Elo | +67 [ +27 ; +108 ] |
+| nœuds par coup | 340 (ancien) / 368 (nouveau), soit ×1,08 |
+
+**Ce résultat ne mesure pas ce qu'on croit.** Trois faits le disent :
+
+1. à nombre de nœuds fixé (800), les deux moteurs jouent **exactement le même coup** sur
+   cinq positions testées — le changement est purement une accélération ;
+2. le gain de nœuds mesuré dans le duel n'est que de 8 %, pas les 16 % attendus : sous
+   20 processus en parallèle, le processeur est saturé et les deux moteurs se partagent
+   les cycles ;
+3. le score est **inversement** corrélé à l'avantage de nœuds : 66,7 % quand le nouveau
+   moteur n'a pas d'avantage, 52,6 % quand il en a un.
+
+Autrement dit, le +67 Elo vient de la divergence chaotique des parties à ~350 nœuds, pas de
+la vitesse. À ce niveau de recherche, huit nœuds de plus changent un coup, puis toute la
+partie. Le duel ne sait pas résoudre un effet de cette taille : il faudrait plusieurs
+milliers de parties.
+
+Ce qui est établi : le moteur est **plus rapide** (×1,16 à temps égal, mesuré proprement),
+il joue **les mêmes coups** à nœuds égaux, et il **ne régresse pas**. L'apport attendu en
+force reste une dizaine d'Elo, pas soixante-sept.
