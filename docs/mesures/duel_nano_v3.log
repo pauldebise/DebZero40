@@ -1,0 +1,29 @@
+200 parties | 1000 ms/coup | 100 ouvertures jouées deux fois | 10 en parallèle
+  10/200 parties | score candidat 80.0 %
+  20/200 parties | score candidat 70.0 %
+  30/200 parties | score candidat 75.0 %
+  40/200 parties | score candidat 72.5 %
+  50/200 parties | score candidat 74.0 %
+  60/200 parties | score candidat 75.8 %
+  70/200 parties | score candidat 75.7 %
+  80/200 parties | score candidat 76.9 %
+  90/200 parties | score candidat 78.9 %
+  100/200 parties | score candidat 78.0 %
+  110/200 parties | score candidat 75.9 %
+  120/200 parties | score candidat 76.7 %
+  130/200 parties | score candidat 76.5 %
+  140/200 parties | score candidat 76.4 %
+  150/200 parties | score candidat 76.7 %
+  160/200 parties | score candidat 76.9 %
+  170/200 parties | score candidat 77.4 %
+  180/200 parties | score candidat 77.5 %
+  190/200 parties | score candidat 77.9 %
+  200/200 parties | score candidat 77.5 %
+
+=== Résultat ===
+candidat : 135 victoires, 40 nulles, 25 défaites sur 200
+score = 77.5 %  [IC95 : 72.6 % - 82.4 %]
+écart Elo estimé : +215  (IC95 : +169 à +268)
+nœuds par coup : référence 211, candidat 383
+=> le candidat est significativement plus fort
+résultats écrits : /workspace/duel_nano_v3.json

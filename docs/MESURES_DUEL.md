@@ -41,3 +41,42 @@ script de vérification qui lit les `info string`.
 
 Correctif à prévoir côté moteur : un `NetPath` invalide devrait être signalé bruyamment,
 pas ignoré.
+
+---
+
+# Duel nano v3 (nano_ib48) contre la production — 26/11, second duel
+
+Même protocole, mêmes 100 ouvertures, mêmes 1 000 ms par coup, 200 parties.
+
+- Référence (A) : `N1_10x64`, 0,98 M paramètres, 3,16 ms/position sur le VPS.
+- Candidat (B) : `nano_ib48` v3 (blocs à goulot inversé, tête bilinéaire), 111 790
+  paramètres, 6,35 M opérations, 0,46 ms/position sur le VPS.
+
+## Résultat
+
+| | valeur |
+|---|---|
+| score | **77,5 %** |
+| intervalle de confiance 95 % | 72,6 % – 82,4 % |
+| écart Elo | **+215** [+169 ; +268] |
+| nœuds par coup (A) | 211 |
+| nœuds par coup (B) | 383 (1,81× plus) |
+
+Conclusion : le candidat est **significativement plus fort**, et l'intervalle est loin
+d'encadrer 50 %.
+
+## Le point important
+
+L'avantage de nœuds est **le même que lors du premier duel** (1,81× contre 1,83×). Ce qui a
+changé, c'est la qualité du réseau : 43,75 % de top-1 sur les positions de validation
+contre 36,0 % pour le nano précédent, soit **+7,75 points**. Le gain de +215 Elo vient donc
+de l'architecture, pas de la vitesse. C'est la démonstration que le calage en opérations
+plutôt qu'en paramètres était le bon choix : le candidat a **neuf fois moins de paramètres**
+que la production et gagne largement.
+
+## Réserve honnête
+
+Deux parties sur 200 se sont terminées en 7 coups avec zéro nœud des deux côtés : les deux
+moteurs ont été coupés juste après l'ouverture, et l'outil a attribué le point à l'un puis à
+l'autre. Les deux vont dans des sens opposés, donc le score n'est pas biaisé, mais le banc
+devrait rejouer ces parties au lieu de les compter.
