@@ -59,6 +59,34 @@ def lc0_index_of(board: chess.Board, move: chess.Move) -> int | None:
     return LC0_MOVE_TO_INDEX.get(uci)
 
 
+# --- table (départ, arrivée, promotion) -> index LC0, en coordonnées blanches -------
+# `lc0_index_of` appelle `is_castling()` et construit une chaîne UCI pour chaque coup
+# légal et chaque nœud : 30 à 40 chaînes par nœud, c'est le poste le plus coûteux de
+# l'encodage. La table remplace tout ça par un accès dictionnaire.
+_PROMO_OF = {"q": chess.QUEEN, "r": chess.ROOK, "b": chess.BISHOP, "n": chess.KNIGHT}
+
+
+def _build_move_index() -> dict:
+    table = {}
+    for uci, idx in LC0_MOVE_TO_INDEX.items():
+        frm = chess.parse_square(uci[:2])
+        to = chess.parse_square(uci[2:4])
+        promo = _PROMO_OF[uci[4]] if len(uci) > 4 else None
+        table[(frm, to, promo)] = idx
+
+    # La sous-promotion en cavalier n'a pas d'entrée propre dans l'espace LC0 : elle
+    # utilise la case nue (a7a8). On la rabat donc sur cette entrée.
+    for (frm, to, promo), idx in list(table.items()):
+        if promo in (chess.QUEEN, chess.ROOK, chess.BISHOP):
+            bare = table.get((frm, to, None))
+            if bare is not None:
+                table[(frm, to, chess.KNIGHT)] = bare
+    return table
+
+
+MOVE_INDEX = _build_move_index()
+
+
 class NetWrapper:
 
     def __init__(self, net_path, cpu=True, temperature = 1.36):
@@ -182,8 +210,19 @@ class NetWrapper:
             # policy. Seuls les coups légaux sont renvoyés au MCTS.
             indexed_moves = []
             legal_mask = np.zeros((1, 1858), dtype=self.legal_mask_dtype)
+            king_sq = board.king(board.turn)
+            mirror = 56 if black else 0
             for move in board.legal_moves:
-                idx = lc0_index_of(board, move)
+                frm = move.from_square
+                to = move.to_square
+                if frm == king_sq and abs(chess.square_file(to) - chess.square_file(frm)) == 2:
+                    # Roque : l'espace LC0 l'encode comme « le roi prend sa tour ».
+                    to = chess.square(7 if chess.square_file(to) == 6 else 0,
+                                      chess.square_rank(frm))
+                idx = MOVE_INDEX.get((frm ^ mirror, to ^ mirror, move.promotion))
+                if idx is None:
+                    # Filet de sécurité : cas exotique absent de la table.
+                    idx = lc0_index_of(board, move)
                 if idx is None:
                     continue
                 indexed_moves.append((move, idx))

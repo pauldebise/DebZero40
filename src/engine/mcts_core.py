@@ -80,14 +80,16 @@ def repetition_count(board: chess.Board, max_plies: int = 100) -> int:
     condition locale et peut créer de fausses nulles (il renvoie True sur beaucoup de
     positions qui ne se sont jamais répétées dans une vraie partie).
 
-    On compare les hash Zobrist de la position courante avec celles obtenues en remontant
-    l'historique de 2 demi-coups en 2 demi-coups, borné par le dernier coup irréversible.
+    On compare la clé de transposition de la position courante avec celles obtenues en
+    remontant l'historique de 2 demi-coups en 2 demi-coups, borné par le dernier coup
+    irréversible. `_transposition_key()` coûte 1,2 µs contre 31 µs pour un hash Zobrist
+    polyglot, et donne la même information (plateau, trait, droits, prise en passant).
     La board passée n'est PAS modifiée : on travaille sur une copie.
     """
     if not board.move_stack:
         return False
 
-    current = chess.polyglot.zobrist_hash(board)
+    current = board._transposition_key()
     limit = min(board.halfmove_clock, max_plies)
 
     work = board.copy(stack=True)
@@ -97,7 +99,7 @@ def repetition_count(board: chess.Board, max_plies: int = 100) -> int:
             work.pop()
         except IndexError:
             break
-        if chess.polyglot.zobrist_hash(work) == current:
+        if work._transposition_key() == current:
             return True
     return False
 
@@ -132,8 +134,15 @@ class Node:
 
         for move, child in self.children.items():
             # Le Q de l'enfant est du point de vue adverse : on l'inverse.
-            q = -child.value() if child.visits else fpu
-            u = c_puct * child.prior * sqrt_visits / (1 + child.visits)
+            # `value()` est inliné : un appel de méthode par enfant et par nœud, c'est
+            # plusieurs milliers d'appels par coup pour rien.
+            visits = child.visits
+            if visits:
+                w = child.wdl
+                q = -(w[0] - w[2]) / visits
+            else:
+                q = fpu
+            u = c_puct * child.prior * sqrt_visits / (1 + visits)
             score = q + u
             if score > best_score:
                 best_score = score
@@ -168,11 +177,15 @@ class MCTS:
         perdants, absents de la policy du réseau et polluent la normalisation."""
         return [m for m in board.legal_moves if m.promotion not in (chess.ROOK, chess.BISHOP)]
 
-    def _expand(self, node: Node, board: chess.Board) -> np.ndarray:
+    def _expand(self, node: Node, board: chess.Board,
+                legal: Optional[List[chess.Move]] = None) -> np.ndarray:
         policy, wdl = self.evaluate(board)
-        legal = self.filtered_legal_moves(board)
+        if legal is None:
+            legal = self.filtered_legal_moves(board)
 
-        weights = np.array([max(policy.get(m, 0.0), 0.0) for m in legal], dtype=np.float64)
+        # `fromiter` évite la liste intermédiaire : 30 à 40 entrées par nœud, ça compte.
+        weights = np.fromiter((max(policy.get(m, 0.0), 0.0) for m in legal),
+                              dtype=np.float64, count=len(legal))
         total = weights.sum()
         if total <= 0:
             weights = np.ones(len(legal), dtype=np.float64)
@@ -199,7 +212,7 @@ class MCTS:
         self._expand(root, board)
         self._add_dirichlet_noise(root)
         self.root = root
-        self.root_key = chess.polyglot.zobrist_hash(board)
+        self.root_key = board._transposition_key()
         return root
 
     @staticmethod
@@ -231,11 +244,18 @@ class MCTS:
         return None
 
     def _leaf_value(self, board: chess.Board, node: Node) -> np.ndarray:
-        terminal = self.terminal_wdl(board)
-        if terminal is not None:
-            return terminal
+        # Une seule génération de coups par nœud : elle sert à la fois à détecter les
+        # positions terminales et à développer le nœud. `is_checkmate()` de python-chess
+        # régénérait la liste complète pour rien.
+        legal = self.filtered_legal_moves(board)
+        if not legal:
+            return Loss if board.is_check() else Draw
+        if board.halfmove_clock >= 100 or board.is_insufficient_material():
+            return Draw
+        if board.move_stack and repetition_count(board):
+            return Draw
 
-        wdl = self._expand(node, board)
+        wdl = self._expand(node, board, legal)
 
         if self.mate_heuristic:
             h = king_distance_heuristic(board)
@@ -252,7 +272,7 @@ class MCTS:
     def run(self, board: chess.Board, max_nodes: int, should_stop: Callable[[], bool],
             reuse_root: bool = True) -> Node:
         """Au plus `max_nodes` simulations, arrêt si `should_stop()` renvoie True."""
-        key = chess.polyglot.zobrist_hash(board)
+        key = board._transposition_key()
         if not (reuse_root and self.root is not None and self.root_key == key):
             self._new_root(board)
 
@@ -261,20 +281,15 @@ class MCTS:
             return self.root
 
         work = board.copy(stack=True)
-        root_fen = board.fen()
-        root_stack = list(board._stack)
         self.nodes_visited = 0
 
         for _ in range(max_nodes):
             if should_stop():
                 break
 
-            # Remise à la position racine sans reconstruire l'objet.
-            work.set_fen(root_fen)
-            work._stack = list(root_stack)
-
             node = self.root
             path = [node]
+            depth = 0
 
             # --- descente
             while node.children:
@@ -282,13 +297,16 @@ class MCTS:
                 if child is None:
                     break
                 work.push(move)
+                depth += 1
                 node = child
                 path.append(node)
 
                 if node.is_leaf():
                     break
-                if work.is_checkmate() or work.is_stalemate() \
-                        or work.is_insufficient_material() or work.is_repetition(2):
+                # Seule la répétition dépend du chemin suivi : un nœud déjà développé
+                # n'est ni mat, ni pat, ni matériellement insuffisant. Les tester ici
+                # régénérait la liste des coups à chaque niveau pour rien.
+                if work.is_repetition(2):
                     break
 
             # --- évaluation du nœud feuille (point de vue du joueur qui y joue)
@@ -304,6 +322,11 @@ class MCTS:
 
             self.nodes_visited += 1
 
+            # --- retour à la position racine (push/pop équilibrés, sans reconstruire)
+            for _ in range(depth):
+                work.pop()
+
+        assert self.root is not None
         return self.root
 
     def principal_variation(self, max_len: int = 16) -> List[chess.Move]:
