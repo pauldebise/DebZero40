@@ -17,7 +17,13 @@ from src.model.nets import build_net
 def load_checkpoint(path):
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     variant = ckpt.get("variant") or ckpt.get("config", {}).get("variant", "base")
-    model = build_net(variant)
+    arch = ckpt.get("arch", "v2")
+    if arch == "v3":
+        from src.model.arch_v3 import build_v3
+
+        model = build_v3(variant)
+    else:
+        model = build_net(variant)
     state = ckpt.get("model_state") or ckpt.get("state_dict") or ckpt.get("model")
     model.load_state_dict(state)
     model.eval()
@@ -57,7 +63,8 @@ def evaluate(model, files, max_positions=20000, batch=512):
 
                 t0 = time.perf_counter()
                 with torch.no_grad():
-                    p, v = model(x, mask)
+                    out = model(x, mask)
+                    p, v = out[0], out[1]
                 t_inf += time.perf_counter() - t0
 
                 # top-1 : le coup le plus probable doit être le plus probable de la cible
