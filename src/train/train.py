@@ -298,6 +298,15 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--smoke", action="store_true", help="20 lots seulement, pour valider la mécanique"
     )
     parser.add_argument(
+        "--select-metric",
+        default="loss",
+        choices=("loss", "policy", "top1"),
+        help=(
+            "critère de sélection du meilleur modèle : loss totale (politique + valeur), "
+            "policy seule (utile quand la tête de valeur oscille), ou top-1"
+        ),
+    )
+    parser.add_argument(
         "--patience",
         type=int,
         default=0,
@@ -421,7 +430,12 @@ def main(argv=None) -> int:
                 model, val_loader, device, wdl_weight=args.wdl_weight,
                 amp=amp, max_batches=max_batches,
             )
-            selection_loss = val_metrics["loss"]
+            if args.select_metric == "policy":
+                selection_loss = val_metrics["policy_loss"]
+            elif args.select_metric == "top1":
+                selection_loss = -val_metrics["top1"]
+            else:
+                selection_loss = val_metrics["loss"]
             val_txt = f" | val {_describe(val_metrics)}"
         else:
             val_metrics = None
