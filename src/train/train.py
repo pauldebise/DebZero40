@@ -128,8 +128,14 @@ def compute_losses(
     wdl: torch.Tensor,
     wdl_weight: float,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Pertes policy (KL cible/probs) + WDL pondérée."""
-    policy, value = model(x, mask)
+    """Pertes policy (KL cible/probs) + WDL pondérée.
+
+    Tolère les réseaux à deux sorties (gamme v2) comme à trois sorties (gamme v3, dont la
+    troisième — coups restants — n'est pas encore supervisée faute de cible dans les
+    shards ; elle est ignorée ici).
+    """
+    out = model(x, mask)
+    policy, value = out[0], out[1]
     policy_loss = -(target * torch.log(policy + 1e-9)).sum(dim=1).mean()
     wdl_loss = -(wdl * torch.log(value + 1e-9)).sum(dim=1).mean()
     loss = policy_loss + wdl_weight * wdl_loss
@@ -268,7 +274,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     parser.add_argument("--shards", required=True, help="répertoire (ou fichier) des shards .npz")
     parser.add_argument(
-        "--variant", default="base", choices=sorted(VARIANT_SPECS), help="taille du réseau"
+        "--arch", default="v2", choices=("v2", "v3"),
+        help="famille d'architecture : v2 = CNN classique, v3 = gamme à budget d'opérations",
+    )
+    parser.add_argument(
+        "--variant", default="base",
+        help="taille du réseau (v2 : nano/small/base/large ; v3 : voir arch_v3.PRESETS)",
     )
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch", type=int, default=1024)
@@ -352,7 +363,20 @@ def main(argv=None) -> int:
             seed=args.seed + 1, device=device,
         )
 
-    model = build_net(args.variant, planes=17).to(device)
+    if args.arch == "v3":
+        from src.model.arch_v3 import PRESETS, build_v3
+
+        if args.variant not in PRESETS:
+            raise SystemExit(
+                f"variante v3 inconnue : {args.variant!r} (connues : {sorted(PRESETS)})"
+            )
+        model = build_v3(args.variant).to(device)
+    else:
+        if args.variant not in VARIANT_SPECS:
+            raise SystemExit(
+                f"variante v2 inconnue : {args.variant!r} (connues : {sorted(VARIANT_SPECS)})"
+            )
+        model = build_net(args.variant, planes=17).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=max(1, args.epochs)
@@ -415,6 +439,7 @@ def main(argv=None) -> int:
 
         checkpoint = {
             "variant": args.variant,
+            "arch": args.arch,
             "planes": 17,
             "state_dict": model.state_dict(),
             "epoch": epoch + 1,

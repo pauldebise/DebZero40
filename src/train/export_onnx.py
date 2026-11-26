@@ -22,22 +22,31 @@ from src.model.nets import POLICY_SIZE, build_net
 from src.train.train import load_checkpoint
 
 
-def _checkpoint_variant(ckpt) -> tuple[str, int]:
-    """Retrouve la variante et le nombre de plans depuis le checkpoint."""
+def _checkpoint_variant(ckpt) -> tuple[str, str, int]:
+    """Retrouve la famille, la variante et le nombre de plans depuis le checkpoint."""
     variant = ckpt.get("variant")
+    arch = ckpt.get("arch", "v2")
     planes = ckpt.get("planes", 17)
     if variant is None:
         config = ckpt.get("config") or ckpt.get("args") or {}
         variant = config.get("variant", "base")
+        arch = config.get("arch", arch)
         planes = config.get("planes", planes)
-    return str(variant), int(planes)
+    return str(arch), str(variant), int(planes)
 
 
 def export_onnx(checkpoint_path: str, out_path: str, opset: int = 17) -> str:
     """Charge ``best.pt``, reconstruit le réseau et exporte en ONNX."""
     ckpt = load_checkpoint(checkpoint_path, map_location="cpu")
-    variant, planes = _checkpoint_variant(ckpt)
-    model = build_net(variant, planes=planes)
+    arch, variant, planes = _checkpoint_variant(ckpt)
+    if arch == "v3":
+        from src.model.arch_v3 import build_v3
+
+        model = build_v3(variant)
+        output_names = ["policy", "wdl", "mlh"]
+    else:
+        model = build_net(variant, planes=planes)
+        output_names = ["policy", "wdl"]
     state = ckpt.get("state_dict", ckpt)
     model.load_state_dict(state)
     model.eval()
@@ -57,6 +66,8 @@ def export_onnx(checkpoint_path: str, out_path: str, opset: int = 17) -> str:
         "policy": {0: "batch"},
         "wdl": {0: "batch"},
     }
+    if arch == "v3":
+        dynamic_axes["mlh"] = {0: "batch"}
     kwargs = {}
     if "dynamo" in inspect.signature(torch.onnx.export).parameters:
         # Le nouvel exportateur dynamo ne gère pas encore tous les cas opset 17 ;
@@ -72,7 +83,7 @@ def export_onnx(checkpoint_path: str, out_path: str, opset: int = 17) -> str:
             opset_version=opset,
             do_constant_folding=True,
             input_names=["input", "legal_mask"],
-            output_names=["policy", "wdl"],
+            output_names=output_names,
             dynamic_axes=dynamic_axes,
             **kwargs,
         )
@@ -92,7 +103,8 @@ def export_onnx(checkpoint_path: str, out_path: str, opset: int = 17) -> str:
     inputs = {i.name: i for i in session.get_inputs()}
     outputs = {o.name: o for o in session.get_outputs()}
     assert set(inputs) == {"input", "legal_mask"}, f"entrées inattendues : {sorted(inputs)}"
-    assert set(outputs) == {"policy", "wdl"}, f"sorties inattendues : {sorted(outputs)}"
+    attendues = {"policy", "wdl"} | ({"mlh"} if arch == "v3" else set())
+    assert set(outputs) == attendues, f"sorties inattendues : {sorted(outputs)}"
 
     # Batch différent de celui de l'export : vérifie le caractère dynamique.
     rng = np.random.default_rng(1234)
