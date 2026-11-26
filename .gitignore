@@ -12,3 +12,5 @@ __pycache__/
 nets/v2_test/
 nets/v2_test/
 nets/v2/*_best.pt
+nets/v2/run_full/last.pt
+nets/v2/run_full/run.log
