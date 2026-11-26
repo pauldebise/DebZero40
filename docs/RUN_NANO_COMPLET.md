@@ -37,9 +37,13 @@ nouveau — environ trois fois plus de positions explorées à temps égal.
   sur 20 M de positions.
 - La perte WDL de validation **oscille violemment** (0,75 → 2,71) alors que celle
   d'entraînement reste plate à 0,74. Sur des données externes, l'exactitude WDL est saine
-  (78 %). Le problème vient donc des shards de validation, dont les étiquettes de résultat
-  sont probablement mal orientées — cohérent avec le biais mesuré (P(gain blanc) = 0,24 à
-  matériel égal au lieu de 0,50).
+  (78 %). **Correction du 26/11** : l'hypothèse d'étiquettes mal orientées est écartée —
+  l'audit des 400 shards (`bench/audit_wdl.py`) montre des statistiques homogènes partout
+  (corrélation matériel/P(gain) entre +0,39 et +0,61, P(gain) à matériel équilibré entre
+  0,13 et 0,17 sur chaque shard, y compris les cinq shards de validation). Cette valeur
+  de 0,15 à matériel égal est normale : à haut niveau la plupart des positions équilibrées
+  sont des nulles. L'instabilité vient donc de la tête de valeur elle-même (cibles très
+  « nulles »), pas des données.
 - **La courbe n'avait pas plafonné à l'époque 16** : le learning rate était à zéro et la
   perte descendait encore de 0,002 par époque. Le facteur limitant est le **volume de
   données**, pas le nombre d'époques.
