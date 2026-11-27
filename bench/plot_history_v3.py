@@ -96,8 +96,8 @@ def courbes_run(h, out, titre):
     style(ax, "Perte WDL (victoire / nulle / défaite)", "perte")
     ax.set_ylim(0.6, 2.65)
     ax.legend(frameon=False, fontsize=8, loc="upper right")
-    ax.annotate("jusqu'à 2,35 : au-delà du hasard", xy=(10, va[9]["wdl_loss"]),
-                xytext=(5.4, 2.35), fontsize=8, color=WDL,
+    ax.annotate("jusqu'à 2,35 à l'époque 1 :\nau-delà du hasard", xy=(1, va[0]["wdl_loss"]),
+                xytext=(4.4, 2.32), fontsize=8, color=WDL,
                 arrowprops=dict(arrowstyle="->", color=WDL, lw=1))
 
     # 4. Top-1 politique
