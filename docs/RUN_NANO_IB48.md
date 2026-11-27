@@ -219,6 +219,47 @@ politique : 43,75 % contre 43,27 %. Le modèle exporté est donc le meilleur pou
 politique, pas pour la valeur. Un **model soup** des époques 15–16, ou une sélection sur un
 critère combiné, est la piste la plus cheap pour récupérer les deux.
 
+## Model soup des époques 15–16
+
+J'ai interpolé linéairement les poids — `soup = (1−α)·best + α·last` — exporté chaque
+variante en ONNX et évalué sur les 250 000 positions de validation.
+
+| α (poids de last) | perte policy | perte WDL | perte totale | top-1 | exactitude WDL | Brier |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0,00 (best) | 2,1678 | **0,7103** | **3,2332** | 42,87 % | **85,96 %** | **0,0681** |
+| 0,25 | **2,1675** | 0,7190 | 3,2460 | 42,92 % | 85,60 % | 0,0730 |
+| **0,50** | 2,1677 | 0,7404 | 3,2783 | **43,42 %** | 84,88 % | 0,0835 |
+| 0,75 | 2,1684 | 0,7696 | 3,3228 | 43,40 % | 84,15 % | 0,0952 |
+| 1,00 (last) | 2,1696 | 0,8036 | 3,3750 | 43,31 % | 83,34 % | 0,1067 |
+
+![Model soup](mesures/soup_nano_ib48.png)
+
+Le point α = 0,5 **domine strictement le modèle déployé** (`last`) sur les six métriques :
+perte politique 2,1677 contre 2,1696, perte WDL 0,7404 contre 0,8036, perte totale 3,2783
+contre 3,3750, top-1 43,42 % contre 43,31 %, exactitude WDL 84,88 % contre 83,34 %, Brier
+0,0835 contre 0,1067. Ce n'est pas un compromis : c'est un gain sur tous les axes par
+rapport à `last`. Face à `best`, le soup échange de la valeur (WDL 0,740 contre 0,710,
+exactitude 84,88 % contre 85,96 %) contre de la politique (top-1 43,42 % contre 42,87 %).
+
+Deux variantes « tête de valeur » ont été testées pour voir si le gain venait de la tête :
+
+| variante | policy | WDL | top-1 | WDL acc | Brier |
+|---|---:|---:|---:|---:|---:|
+| `last` + tête de valeur de `best` | 2,1696 | 0,7983 | 43,31 % | 83,47 % | 0,1053 |
+| soup 0,5 + tête de valeur de `best` | 2,1677 | 0,7391 | 43,42 % | 84,93 % | 0,0830 |
+| soup 0,5 pur | 2,1677 | 0,7404 | 43,42 % | 84,88 % | 0,0835 |
+
+La tête de valeur de `best` ne transfère pas sur le tronc de `last` (WDL 0,798 au lieu de
+0,804, gain marginal) : la valeur dépend du tronc, pas seulement de la tête. Sur le tronc
+du soup, elle n'apporte que 0,0013 de WDL et 0,05 point d'exactitude. Le soup pur est donc
+le choix robuste et simple.
+
+Le fichier `nets/v3/nano_ib48_soup.onnx` (α = 0,5) et son checkpoint
+`nets/v3/nano_ib48_soup.pt` sont versionnés. La prochaine étape est un duel soup 0,5 contre
+`last` : les métriques de validation sont une condition nécessaire, pas une preuve de gain
+en parties. Si le duel confirme, le soup remplace `last` en production ; sinon, on garde
+`last` et on passe au réentraînement propre (MLH, filtre de visites, sélection combinée).
+
 ## Bilan
 
 Le réseau gagne **+7,75 points de top-1** contre le nano v2 (43,75 % contre 36,0 %) et

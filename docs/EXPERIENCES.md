@@ -20,6 +20,7 @@ Règles :
 | 26/11 | quantification fp32 / dynamique / statique du nano v3 | 0 $ | 0,48 / 2,69 / 1,39 ms et 43,98 / 29,68 / 5,88 % de top-1 | perdant sur ce processeur (pas de VNNI, convolutions profondes) ; ne pas refaire |
 | 26/11 | profilage et optimisation du moteur (Python) | 0 $ | banc : 1,73 -> 1,29 ms/nœud ; conditions réelles : 572 -> 664 nœuds/s (x1,16) | +16 % de nœuds pour zéro euro ; le réseau est désormais le poste dominant |
 | 26/11 | duel de vérification moteur ancien/nouveau, 200 parties, même réseau (dont un premier pod raté, image sans SSH) | 1,70 $ | 59,5 % [+67 Elo, IC +27/+108], mais 8 % de nœuds en plus seulement et score inversement corrélé à l'avantage de nœuds | gain réel ~+10 Elo ; le duel à 350 nœuds/coup est trop bruité pour trancher, ne pas refaire à cette taille |
+| 27/11 | model soup best/last (α = 0,5) et audit de calibration WDL, 250 k positions de validation | 0 $ | top-1 43,42 %, WDL 0,740, exactitude WDL 84,88 %, Brier 0,0835 | domine strictement `last` sur les six métriques ; à valider en duel avant déploiement |
 
 ## Ce que ça a coûté jusqu'ici
 
