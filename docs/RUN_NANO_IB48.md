@@ -152,6 +152,73 @@ python -m src.train.train --shards /workspace/shards/all --arch v3 --variant nan
   29,0 %, avec 4 à 6 fois plus de paramètres. À budget d'opérations, mettre les paramètres
   dans la tête dense est le mauvais choix.
 
+## Calibration WDL du modèle exporté
+
+L'oscillation de la perte WDL pendant l'entraînement ne dit pas tout : ce qui compte pour
+le moteur, c'est la calibration du modèle **exporté**. Audit sur les 250 000 positions des
+5 shards de validation (`bench/audit_wdl_calibration.py`) :
+
+| métrique | valeur |
+|---|---:|
+| entropie croisée moyenne | 0,804 |
+| exactitude WDL | 83,34 % |
+| Brier | 0,107 |
+| ECE victoire | 0,009 |
+| ECE nulle | 0,032 |
+| ECE défaite | 0,028 |
+| cible nulle moyenne | 58,5 % |
+| nulle prédite moyenne | 56,3 % |
+| entropie de la cible | 0,605 |
+| entropie prédite | 0,699 |
+
+Globalement, le modèle est **bien calibré** : les ECE sont faibles et le Brier est bon. Il
+est même un peu **moins confiant** que la cible (entropie 0,699 contre 0,605), ce qui est
+le comportement d'une tête sous-entraînée qui se replie vers la moyenne. Mais le diagramme
+de fiabilité de la classe nulle révèle un défaut localisé :
+
+| nulle prédite | nulle observée | positions |
+|---:|---:|---:|
+| 1,4 % | **15,9 %** | 23 769 |
+| 15,3 % | 30,4 % | 5 168 |
+| 25,4 % | 35,2 % | 7 311 |
+| 35,5 % | 40,8 % | 12 458 |
+| 45,5 % | 47,7 % | 23 211 |
+| 55,6 % | 56,5 % | 44 946 |
+| 64,8 % | 65,2 % | 73 288 |
+| 74,6 % | 74,1 % | 24 593 |
+| 84,7 % | 82,4 % | 16 853 |
+| 96,5 % | 92,4 % | 18 403 |
+
+Quand le modèle prédit une nulle **très basse** (1,4 %), la cible LC0 est en réalité à
+**15,9 %** : dans les positions tranchantes, il est trop sûr que la position est décisive.
+À l'inverse, quand il prédit une nulle très haute (96,5 %), la cible est à 92,4 % : il
+surévalue un peu les positions déjà nulles. Le milieu de l'échelle est bien calibré. C'est
+un biais **décisif** dans les positions sharp, pas un biais uniforme.
+
+La perte est aussi plus forte au **milieu de partie** qu'en finale :
+
+| pièces | positions | CE | cible nulle | prédite nulle |
+|---|---:|---:|---:|---:|
+| 2–8 | 38 775 | 0,723 | 58,5 % | 49,8 % |
+| 9–16 | 63 113 | **0,672** | 61,6 % | 59,3 % |
+| 17–24 | 58 427 | 0,831 | 55,4 % | 54,5 % |
+| 25–32 | 89 685 | **0,914** | 58,5 % | 58,2 % |
+
+![Calibration WDL](mesures/calibration_wdl_nano_ib48.png)
+
+Conséquence pour le moteur : le MCTS utilise `q = wdl[0] - wdl[2]` à chaque feuille. Une
+sous-estimation de la nulle dans les positions sharp peut faire surévaluer une attaque ou
+sous-estimer une ressource défensive. Le biais moyen reste petit — `q` prédit −0,063 contre
+−0,032 pour la cible, soit ~19 centipions de pessimisme — mais il est localisé là où le
+moteur prend ses décisions tactiques. Le duel (77,5 %, +215 Elo) montre que ce n'est pas
+rédhibitoire ; c'est une marge de progression, pas une panne.
+
+Le checkpoint `best.pt` (époque 15) est meilleur sur la valeur : perte WDL 0,712 contre
+0,804, exactitude externe 85,52 % contre 82,86 %. Mais `last.pt` est meilleur sur la
+politique : 43,75 % contre 43,27 %. Le modèle exporté est donc le meilleur pour la
+politique, pas pour la valeur. Un **model soup** des époques 15–16, ou une sélection sur un
+critère combiné, est la piste la plus cheap pour récupérer les deux.
+
 ## Bilan
 
 Le réseau gagne **+7,75 points de top-1** contre le nano v2 (43,75 % contre 36,0 %) et
