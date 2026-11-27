@@ -14,10 +14,11 @@ import math
 import os
 import random
 import time
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from src.model.nets import POLICY_SIZE, VARIANT_SPECS, build_net
@@ -127,19 +128,41 @@ def compute_losses(
     target: torch.Tensor,
     wdl: torch.Tensor,
     wdl_weight: float,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Pertes policy (KL cible/probs) + WDL pondérée.
+    mlh_weight: float = 0.0,
+    mlh_scale: float = 100.0,
+    plies_left: Optional[torch.Tensor] = None,
+    has_mlh: Optional[torch.Tensor] = None,
+) -> Tuple[
+    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
+    torch.Tensor, torch.Tensor, Optional[torch.Tensor],
+]:
+    """Pertes policy (KL cible/probs) + WDL pondérée + MLH auxiliaire.
 
-    Tolère les réseaux à deux sorties (gamme v2) comme à trois sorties (gamme v3, dont la
-    troisième — coups restants — n'est pas encore supervisée faute de cible dans les
-    shards ; elle est ignorée ici).
+    Le MLH est la 4e sortie de la tête de valeur (``softplus``). Sa cible est
+    ``plies_left`` normalisée par ``mlh_scale`` ; les positions dont le shard n'a
+    pas la cible sont exclues via ``has_mlh``. Un réseau à deux sorties (v2) est
+    toléré : le terme MLH est alors nul.
     """
     out = model(x, mask)
     policy, value = out[0], out[1]
+    mlh = out[2] if len(out) > 2 else None
     policy_loss = -(target * torch.log(policy + 1e-9)).sum(dim=1).mean()
     wdl_loss = -(wdl * torch.log(value + 1e-9)).sum(dim=1).mean()
-    loss = policy_loss + wdl_weight * wdl_loss
-    return loss, policy_loss, wdl_loss, policy, value
+
+    if mlh is not None and mlh_weight > 0.0 and plies_left is not None:
+        mlh_flat = mlh.reshape(-1).float()
+        cible_mlh = (plies_left.float() / mlh_scale).reshape(-1)
+        par_position = F.smooth_l1_loss(mlh_flat, cible_mlh, reduction="none")
+        if has_mlh is not None:
+            poids = has_mlh.float().reshape(-1)
+            mlh_loss = (par_position * poids).sum() / poids.sum().clamp_min(1.0)
+        else:
+            mlh_loss = par_position.mean()
+    else:
+        mlh_loss = torch.zeros((), device=policy.device, dtype=policy.dtype)
+
+    loss = policy_loss + wdl_weight * wdl_loss + mlh_weight * mlh_loss
+    return loss, policy_loss, wdl_loss, mlh_loss, policy, value, mlh
 
 
 def _new_metrics() -> Dict[str, float]:
@@ -147,21 +170,29 @@ def _new_metrics() -> Dict[str, float]:
         "loss": 0.0,
         "policy_loss": 0.0,
         "wdl_loss": 0.0,
+        "mlh_loss": 0.0,
         "top1": 0.0,
         "wdl_acc": 0.0,
+        "mlh_mae": 0.0,
+        "mlh_samples": 0.0,
         "samples": 0.0,
         "batches": 0.0,
     }
 
 
-def _finalize_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
+def _finalize_metrics(metrics: Dict[str, float]) -> Dict[str, Any]:
     n = max(metrics["samples"], 1.0)
+    mlh_samples = metrics["mlh_samples"]
     out = {
         "loss": metrics["loss"] / n,
         "policy_loss": metrics["policy_loss"] / n,
         "wdl_loss": metrics["wdl_loss"] / n,
+        "mlh_loss": metrics["mlh_loss"] / n,
         "top1": metrics["top1"] / n,
         "wdl_acc": metrics["wdl_acc"] / n,
+        "mlh_mae": (
+            metrics["mlh_mae"] / mlh_samples if mlh_samples > 0 else None
+        ),
         "samples": int(metrics["samples"]),
         "batches": int(metrics["batches"]),
     }
@@ -175,26 +206,32 @@ def train_epoch(
     scaler,
     device: torch.device,
     wdl_weight: float = 1.5,
+    mlh_weight: float = 0.0,
+    mlh_scale: float = 100.0,
     amp: bool = False,
     max_batches: Optional[int] = None,
-) -> Dict[str, float]:
+) -> Dict[str, Any]:
     """Une époque d'entraînement. Retourne les métriques moyennées."""
     model.train()
     metrics = _new_metrics()
     amp = bool(amp and device.type == "cuda")
 
-    for step, (x, mask, target, wdl) in enumerate(loader):
+    for step, (x, mask, target, wdl, plies_left, has_mlh) in enumerate(loader):
         if max_batches is not None and step >= max_batches:
             break
         x = x.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
         wdl = wdl.to(device, non_blocking=True)
+        plies_left = plies_left.to(device, non_blocking=True)
+        has_mlh = has_mlh.to(device, non_blocking=True)
 
         optimizer.zero_grad(set_to_none=True)
         with _autocast(device, amp):
-            loss, p_loss, v_loss, policy, value = compute_losses(
-                model, x, mask, target, wdl, wdl_weight
+            loss, p_loss, v_loss, m_loss, policy, value, mlh = compute_losses(
+                model, x, mask, target, wdl, wdl_weight,
+                mlh_weight=mlh_weight, mlh_scale=mlh_scale,
+                plies_left=plies_left, has_mlh=has_mlh,
             )
 
         if scaler is not None and scaler.is_enabled():
@@ -212,12 +249,22 @@ def train_epoch(
         metrics["loss"] += float(loss.detach()) * n
         metrics["policy_loss"] += float(p_loss.detach()) * n
         metrics["wdl_loss"] += float(v_loss.detach()) * n
+        metrics["mlh_loss"] += float(m_loss.detach()) * n
         metrics["top1"] += float(
             (policy.detach().argmax(dim=1) == target.argmax(dim=1)).sum()
         )
         metrics["wdl_acc"] += float(
             (value.detach().argmax(dim=1) == wdl.argmax(dim=1)).sum()
         )
+        if mlh is not None:
+            valides = has_mlh > 0
+            if bool(valides.any()):
+                erreur = (
+                    mlh.detach().reshape(-1)[valides] * mlh_scale
+                    - plies_left[valides]
+                ).abs()
+                metrics["mlh_mae"] += float(erreur.sum())
+                metrics["mlh_samples"] += int(valides.sum())
         metrics["samples"] += n
         metrics["batches"] += 1
 
@@ -230,37 +277,52 @@ def evaluate(
     loader: Iterable,
     device: torch.device,
     wdl_weight: float = 1.5,
+    mlh_weight: float = 0.0,
+    mlh_scale: float = 100.0,
     amp: bool = False,
     max_batches: Optional[int] = None,
-) -> Dict[str, float]:
+) -> Dict[str, Any]:
     """Évaluation sans gradient."""
     model.eval()
     metrics = _new_metrics()
     amp = bool(amp and device.type == "cuda")
 
-    for step, (x, mask, target, wdl) in enumerate(loader):
+    for step, (x, mask, target, wdl, plies_left, has_mlh) in enumerate(loader):
         if max_batches is not None and step >= max_batches:
             break
         x = x.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
         wdl = wdl.to(device, non_blocking=True)
+        plies_left = plies_left.to(device, non_blocking=True)
+        has_mlh = has_mlh.to(device, non_blocking=True)
 
         with _autocast(device, amp):
-            loss, p_loss, v_loss, policy, value = compute_losses(
-                model, x, mask, target, wdl, wdl_weight
+            loss, p_loss, v_loss, m_loss, policy, value, mlh = compute_losses(
+                model, x, mask, target, wdl, wdl_weight,
+                mlh_weight=mlh_weight, mlh_scale=mlh_scale,
+                plies_left=plies_left, has_mlh=has_mlh,
             )
 
         n = int(x.shape[0])
         metrics["loss"] += float(loss) * n
         metrics["policy_loss"] += float(p_loss) * n
         metrics["wdl_loss"] += float(v_loss) * n
+        metrics["mlh_loss"] += float(m_loss) * n
         metrics["top1"] += float(
             (policy.argmax(dim=1) == target.argmax(dim=1)).sum()
         )
         metrics["wdl_acc"] += float(
             (value.argmax(dim=1) == wdl.argmax(dim=1)).sum()
         )
+        if mlh is not None:
+            valides = has_mlh > 0
+            if bool(valides.any()):
+                erreur = (
+                    mlh.reshape(-1)[valides] * mlh_scale - plies_left[valides]
+                ).abs()
+                metrics["mlh_mae"] += float(erreur.sum())
+                metrics["mlh_samples"] += int(valides.sum())
         metrics["samples"] += n
         metrics["batches"] += 1
 
@@ -288,6 +350,18 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--out", default=os.path.join("runs", "base"), help="répertoire de sortie")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--wdl-weight", type=float, default=1.5)
+    parser.add_argument(
+        "--mlh-weight",
+        type=float,
+        default=0.0,
+        help="poids de la perte MLH auxiliaire (0 = désactivée ; 0,02 conseillé)",
+    )
+    parser.add_argument(
+        "--mlh-scale",
+        type=float,
+        default=100.0,
+        help="diviseur de la cible plies_left (le réseau sort des plies / mlh_scale)",
+    )
     parser.add_argument("--val-shards", type=int, default=1, help="nombre de shards de validation")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -300,11 +374,23 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "--select-metric",
         default="loss",
-        choices=("loss", "policy", "top1"),
+        choices=("loss", "policy", "top1", "wdl", "combined"),
         help=(
             "critère de sélection du meilleur modèle : loss totale (politique + valeur), "
-            "policy seule (utile quand la tête de valeur oscille), ou top-1"
+            "policy seule (utile quand la tête de valeur oscille), top-1, wdl (perte WDL) "
+            "ou combined = top-1 + poids × exactitude WDL"
         ),
+    )
+    parser.add_argument(
+        "--combined-wdl-weight",
+        type=float,
+        default=0.25,
+        help="poids de l'exactitude WDL dans le score combined (défaut 0,25)",
+    )
+    parser.add_argument(
+        "--save-every-epoch",
+        action="store_true",
+        help="écrit epoch_XX.pt à chaque époque (pour un model soup / SWA)",
     )
     parser.add_argument(
         "--patience",
@@ -331,10 +417,13 @@ def parse_args(argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _describe(m: Dict[str, float]) -> str:
+def _describe(m: Dict[str, Any]) -> str:
+    mlh_txt = ""
+    if m.get("mlh_mae") is not None:
+        mlh_txt = f" mlh {m['mlh_mae']:.1f}"
     return (
         f"loss {m['loss']:.4f} (p {m['policy_loss']:.4f}, v {m['wdl_loss']:.4f}) "
-        f"top1 {m['top1']:.4f} wdl {m['wdl_acc']:.4f}"
+        f"top1 {m['top1']:.4f} wdl {m['wdl_acc']:.4f}{mlh_txt}"
     )
 
 
@@ -394,6 +483,9 @@ def main(argv=None) -> int:
 
     start_epoch = 0
     best_val = math.inf
+    best_policy = math.inf
+    best_wdl = math.inf
+    best_combined = math.inf
     if args.resume:
         ckpt = load_checkpoint(args.resume, map_location=device)
         state = ckpt.get("state_dict", ckpt)
@@ -422,18 +514,27 @@ def main(argv=None) -> int:
         t0 = time.time()
         train_metrics = train_epoch(
             model, train_loader, optimizer, scaler, device,
-            wdl_weight=args.wdl_weight, amp=amp, max_batches=max_batches,
+            wdl_weight=args.wdl_weight, mlh_weight=args.mlh_weight,
+            mlh_scale=args.mlh_scale, amp=amp, max_batches=max_batches,
         )
 
         if val_loader is not None:
             val_metrics = evaluate(
                 model, val_loader, device, wdl_weight=args.wdl_weight,
+                mlh_weight=args.mlh_weight, mlh_scale=args.mlh_scale,
                 amp=amp, max_batches=max_batches,
             )
             if args.select_metric == "policy":
                 selection_loss = val_metrics["policy_loss"]
             elif args.select_metric == "top1":
                 selection_loss = -val_metrics["top1"]
+            elif args.select_metric == "wdl":
+                selection_loss = val_metrics["wdl_loss"]
+            elif args.select_metric == "combined":
+                selection_loss = -(
+                    val_metrics["top1"]
+                    + args.combined_wdl_weight * val_metrics["wdl_acc"]
+                )
             else:
                 selection_loss = val_metrics["loss"]
             val_txt = f" | val {_describe(val_metrics)}"
@@ -459,6 +560,8 @@ def main(argv=None) -> int:
             "epoch": epoch + 1,
             "val_loss": selection_loss,
             "best_val": min(best_val, selection_loss),
+            "select_metric": args.select_metric,
+            "combined_wdl_weight": args.combined_wdl_weight,
             "metrics": {"train": train_metrics, "val": val_metrics},
         }
 
@@ -495,6 +598,40 @@ def main(argv=None) -> int:
             checkpoint["best_val"] = best_val
             torch.save(checkpoint, os.path.join(args.out, "best.pt"))
             print(f"  -> nouveau best.pt (val loss {best_val:.4f})", flush=True)
+
+        if args.save_every_epoch:
+            torch.save(
+                checkpoint, os.path.join(args.out, f"epoch_{epoch + 1:02d}.pt")
+            )
+
+        # Checkpoints annexes : politique seule, valeur seule et score combiné.
+        # Ils permettent de choisir après coup sur une validation externe, sans
+        # confier la sélection à la perte totale dominée par le WDL.
+        if val_metrics is not None:
+            policy_score = float(val_metrics["policy_loss"])
+            wdl_score = float(val_metrics["wdl_loss"])
+            combined_score = -(
+                float(val_metrics["top1"])
+                + args.combined_wdl_weight * float(val_metrics["wdl_acc"])
+            )
+            if policy_score < best_policy:
+                best_policy = policy_score
+                extra = dict(checkpoint)
+                extra["best_val"] = policy_score
+                extra["selection"] = "policy"
+                torch.save(extra, os.path.join(args.out, "best_policy.pt"))
+            if wdl_score < best_wdl:
+                best_wdl = wdl_score
+                extra = dict(checkpoint)
+                extra["best_val"] = wdl_score
+                extra["selection"] = "wdl"
+                torch.save(extra, os.path.join(args.out, "best_wdl.pt"))
+            if combined_score < best_combined:
+                best_combined = combined_score
+                extra = dict(checkpoint)
+                extra["best_val"] = combined_score
+                extra["selection"] = "combined"
+                torch.save(extra, os.path.join(args.out, "best_combined.pt"))
 
         # ``last.pt`` doit permettre de reprendre : on y ajoute l'optimiseur,
         # le scheduler et l'époque.

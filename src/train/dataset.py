@@ -6,7 +6,9 @@ Un shard contient :
 * ``pol_idx`` : ``uint16`` ``(N, 64)`` indices des coups dans la table 1858 ;
 * ``pol_prob``: ``float16`` ``(N, 64)`` probabilités associées ;
 * ``pol_len`` : ``uint8``  ``(N,)`` nombre de coups effectivement présents ;
-* ``wdl``     : ``float16`` ``(N, 3)`` distribution win/draw/loss.
+* ``wdl``     : ``float16`` ``(N, 3)`` distribution win/draw/loss ;
+* ``plies_left`` : ``float16`` ``(N,)`` demi-coups restants (cible MLH, optionnel
+  pour les anciens shards).
 
 Le réseau attend une entrée **NHWC** ``(B, 8, 8, 17)`` et un masque de légalité
 ``(B, 1858)``.  ``ShardDataset`` renvoie une position à la fois ; le ``collate_fn``
@@ -20,7 +22,7 @@ from __future__ import annotations
 import bisect
 import glob
 import os
-from typing import Dict, Iterable, List, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, List, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -99,8 +101,8 @@ class ShardDataset(Dataset):
         self._total = total
 
         self._cached_shard: int | None = None
-        self._cache: Dict[str, torch.Tensor | int] | None = None
-        self._cache_dict: Dict[int, Dict[str, torch.Tensor | int]] = {}
+        self._cache: Dict[str, Any] | None = None
+        self._cache_dict: Dict[int, Dict[str, Any]] = {}
         # Cache borné : en lecture groupée par shard un seul suffit, et sans borne
         # chaque processus de lecture accumulait tout le jeu de données (tué par l'OOM).
         self.max_cached_shards = max_cached_shards
@@ -137,6 +139,14 @@ class ShardDataset(Dataset):
             pol_prob = np.asarray(data["pol_prob"])
             pol_len = np.asarray(data["pol_len"])
             wdl = np.asarray(data["wdl"])
+            # Les shards antérieurs au run « propre » n'ont pas cette clé : on
+            # renvoie zéro et le masque has_mlh=0, la perte MLH est alors ignorée.
+            if "plies_left" in data:
+                plies_left = np.asarray(data["plies_left"], dtype=np.float32)
+                has_mlh = 1.0
+            else:
+                plies_left = np.zeros(planes.shape[0], dtype=np.float32)
+                has_mlh = 0.0
 
         if planes.ndim != 4 or planes.shape[1] != self.planes:
             if planes.ndim == 4 and planes.shape[1] >= self.planes:
@@ -152,6 +162,8 @@ class ShardDataset(Dataset):
             "pol_prob": torch.from_numpy(np.ascontiguousarray(pol_prob)).float(),
             "pol_len": torch.from_numpy(np.ascontiguousarray(pol_len)).long(),
             "wdl": torch.from_numpy(np.ascontiguousarray(wdl)).float(),
+            "plies_left": torch.from_numpy(np.ascontiguousarray(plies_left)).float(),
+            "has_mlh": has_mlh,
         }
         self._cache_dict[shard_index] = self._cache
         self._cached_shard = shard_index
@@ -175,14 +187,16 @@ class ShardDataset(Dataset):
 
     # ------------------------------------------------------------------ accès
     def __getitem__(self, index: int):
-        """Renvoie ``(x, mask, idx, prob, length, wdl)`` pour une position.
+        """Renvoie ``(x, mask, idx, prob, length, wdl, plies_left, has_mlh)``.
 
-        * ``x``      : float32 ``(8, 8, planes)`` — NHWC ;
-        * ``mask``   : float32 ``(1858,)`` — 1 pour un coup légal ;
-        * ``idx``    : int64 ``(64,)`` — indices bruts du shard ;
-        * ``prob``   : float32 ``(64,)`` — probabilités brutes ;
-        * ``length`` : int64 scalaire ;
-        * ``wdl``    : float32 ``(3,)``.
+        * ``x``          : float32 ``(8, 8, planes)`` — NHWC ;
+        * ``mask``       : float32 ``(1858,)`` — 1 pour un coup légal ;
+        * ``idx``        : int64 ``(64,)`` — indices bruts du shard ;
+        * ``prob``       : float32 ``(64,)`` — probabilités brutes ;
+        * ``length``     : int64 scalaire ;
+        * ``wdl``        : float32 ``(3,)`` ;
+        * ``plies_left`` : float32 scalaire — 0 si le shard n'a pas la cible ;
+        * ``has_mlh``    : float32 scalaire — 1 si la cible MLH est disponible.
         """
         if self._order is not None:
             index = int(self._order[index])
@@ -209,19 +223,27 @@ class ShardDataset(Dataset):
         if wdl.numel() != 3:
             raise ValueError(f"{self.shards[shard]}: wdl de forme {tuple(wdl.shape)}, attendu (3,)")
 
-        return x, mask, idx, prob, torch.tensor(length, dtype=torch.long), wdl
+        plies_left = self._cache["plies_left"][row].clone()
+        has_mlh = torch.tensor(float(self._cache["has_mlh"]), dtype=torch.float32)
+
+        return (
+            x, mask, idx, prob, torch.tensor(length, dtype=torch.long), wdl,
+            plies_left, has_mlh,
+        )
 
 
 def collate_shard_batch(batch: Iterable[Tuple[torch.Tensor, ...]]):
     """Assemble des positions et construit les cibles policy **denses**.
 
-    Renvoie ``(x, mask, target, wdl)`` avec :
+    Renvoie ``(x, mask, target, wdl, plies_left, has_mlh)`` avec :
 
-    * ``x``      : float32 ``(B, 8, 8, planes)`` ;
-    * ``mask``   : float32 ``(B, 1858)`` ;
-    * ``target`` : float32 ``(B, 1858)``, construit par ``scatter_add_`` puis
+    * ``x``          : float32 ``(B, 8, 8, planes)`` ;
+    * ``mask``       : float32 ``(B, 1858)`` ;
+    * ``target``     : float32 ``(B, 1858)``, construit par ``scatter_add_`` puis
       renormalisé sur les coups légaux ;
-    * ``wdl``    : float32 ``(B, 3)``.
+    * ``wdl``        : float32 ``(B, 3)`` ;
+    * ``plies_left`` : float32 ``(B,)`` — cible MLH brute (demi-coups) ;
+    * ``has_mlh``    : float32 ``(B,)`` — 1 si la cible MLH existe.
     """
     batch = list(batch)
     if not batch:
@@ -233,6 +255,8 @@ def collate_shard_batch(batch: Iterable[Tuple[torch.Tensor, ...]]):
     prob = torch.stack([item[3] for item in batch]).float()
     lengths = torch.stack([item[4] for item in batch]).long()
     wdl = torch.stack([item[5] for item in batch]).float()
+    plies_left = torch.stack([item[6] for item in batch]).float()
+    has_mlh = torch.stack([item[7] for item in batch]).float()
 
     batch_size = xs.shape[0]
     moves = idx.shape[1]
@@ -256,7 +280,7 @@ def collate_shard_batch(batch: Iterable[Tuple[torch.Tensor, ...]]):
         sums = target.sum(dim=1, keepdim=True)
 
     target = target / sums.clamp_min(1e-12)
-    return xs, masks, target, wdl
+    return xs, masks, target, wdl, plies_left, has_mlh
 
 
 class ShardBatchSampler:

@@ -129,13 +129,15 @@ def test_dataset_shapes_targets_and_mask(tmp_path):
     ds = ShardDataset([p1, p2])
     assert len(ds) == 128
 
-    x, mask, idx, prob, length, wdl = ds[0]
+    x, mask, idx, prob, length, wdl, plies_left, has_mlh = ds[0]
     assert x.shape == (8, 8, 17)
     assert x.dtype == torch.float32
     assert mask.shape == (POLICY_SIZE,)
     assert mask.dtype == torch.float32
     assert wdl.shape == (3,)
     assert wdl.dtype == torch.float32
+    assert plies_left.shape == ()
+    assert float(has_mlh) == 0.0  # shard historique sans cible MLH
 
     # x est bien la transposition NHWC des plans NCHW du shard.
     with np.load(p1) as data:
@@ -148,12 +150,15 @@ def test_dataset_shapes_targets_and_mask(tmp_path):
     assert torch.all(mask[idx[:n_legal].long()] == 1.0)
 
     batch = collate_shard_batch([ds[i] for i in range(8)])
-    bx, bmask, btarget, bwdl = batch
+    bx, bmask, btarget, bwdl, bplies, bhas = batch
     assert bx.shape == (8, 8, 8, 17)
     assert bmask.shape == (8, POLICY_SIZE)
     assert btarget.shape == (8, POLICY_SIZE)
     assert btarget.dtype == torch.float32
     assert bwdl.shape == (8, 3)
+    assert bplies.shape == (8,)
+    assert bhas.shape == (8,)
+    assert torch.all(bhas == 0)
 
     assert torch.allclose(btarget.sum(dim=1), torch.ones(8), atol=1e-5)
     assert torch.all(btarget >= 0)

@@ -14,6 +14,9 @@ Exemple :
 La position reconstruite est toujours vue du camp au trait : ses pièces sont les plans
 0..5 (blancs) et celles de l'adversaire les plans 6..11 (noirs).  C'est exactement le
 repère du réseau.
+
+Chaque position est écrite avec la cible WDL douce dérivée de la recherche LC0 et le
+nombre de demi-coups restants (``plies_left``), utilisé comme cible auxiliaire MLH.
 """
 
 from __future__ import annotations
@@ -427,6 +430,7 @@ class ShardWriter:
         self._pol_prob = np.empty((self._capacity, MAX_POLICY), dtype=np.float16)
         self._pol_len = np.empty((self._capacity,), dtype=np.uint8)
         self._wdl = np.empty((self._capacity, 3), dtype=np.float16)
+        self._plies_left = np.empty((self._capacity,), dtype=np.float16)
 
     def _grow(self, needed: int) -> None:
         if needed <= self._capacity:
@@ -445,6 +449,8 @@ class ShardWriter:
         pol_len[:self._count] = self._pol_len[:self._count]
         wdl = np.empty((new_capacity, 3), dtype=np.float16)
         wdl[:self._count] = self._wdl[:self._count]
+        plies_left = np.empty((new_capacity,), dtype=np.float16)
+        plies_left[:self._count] = self._plies_left[:self._count]
 
         self._capacity = new_capacity
         self._planes = planes
@@ -452,9 +458,10 @@ class ShardWriter:
         self._pol_prob = pol_prob
         self._pol_len = pol_len
         self._wdl = wdl
+        self._plies_left = plies_left
 
     def add(self, planes: np.ndarray, pol_idx: np.ndarray, pol_prob: np.ndarray,
-            pol_len: int, wdl: np.ndarray) -> None:
+            pol_len: int, wdl: np.ndarray, plies_left: float = 0.0) -> None:
         self._grow(self._count + 1)
         i = self._count
 
@@ -465,6 +472,7 @@ class ShardWriter:
         self._pol_prob[i, :pol_len] = pol_prob
         self._pol_len[i] = pol_len
         self._wdl[i] = wdl
+        self._plies_left[i] = float(plies_left)
 
         self._count += 1
         if self._count >= self.shard_size:
@@ -483,6 +491,7 @@ class ShardWriter:
             pol_prob=self._pol_prob[:n],
             pol_len=self._pol_len[:n],
             wdl=self._wdl[:n],
+            plies_left=self._plies_left[:n],
         )
         self.shard_index += 1
         self.total += n
@@ -579,6 +588,7 @@ def convert(args: argparse.Namespace) -> tuple[Stats, ShardWriter, float]:
                 pol_prob,
                 pol_len,
                 wdl_target(record["root_q"], record["root_d"]),
+                record["plies_left"],
             )
 
             if max_positions is not None and stats.accepted >= max_positions:
@@ -604,6 +614,7 @@ def write_manifest(args: argparse.Namespace, stats: Stats, writer: ShardWriter,
             "max_positions": args.max_positions,
             "min_visits": args.min_visits,
             "min_ply": args.min_ply,
+            "has_plies_left": True,
         },
         "date": datetime.now(timezone.utc).isoformat(),
         "stats": {
