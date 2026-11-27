@@ -86,8 +86,8 @@ def main():
     fleche(ax, 8.50, y0 + h0 / 2, 8.70, y0 + h0 / 2)
     boite(ax, 8.70, y0, 1.15, h0, "SE 8×", "48 → 6 → 48\npoids par canal\n\n630 p.", VIOLET, "white", 9, 8)
 
-    ax.text(7.42, 4.08, "BN + SiLU après chaque convolution  ·  sortie = entrée + bloc(entrée)  ·  "
-            "16 038 param. par bloc, 96 228 au total",
+    ax.text(7.42, 4.08, "BN + SiLU après DW et PW1  ·  SE après la projection  ·  "
+            "sortie = entrée + bloc(entrée)  ·  16 038 param. par bloc, 96 228 au total",
             ha="center", va="center", fontsize=8.3, color="#24292f")
     ax.text(7.42, 3.62, "pas de contexte global dans le nano  ·  pas de changement de résolution",
             ha="center", va="center", fontsize=8.3, color=GRIS, style="italic")
