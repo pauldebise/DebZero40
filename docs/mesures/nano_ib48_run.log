@@ -1,0 +1,24 @@
+shards: 400 (train 395, val 5) | variante nano_ib48 | device cuda | amp True
+paramètres: 111,790
+époque   1/16 | train loss 3.6667 (p 2.4725, v 0.7961) top1 0.3232 wdl 0.8107 | val loss 5.9474 (p 2.4239, v 2.3491) top1 0.3418 wdl 0.6583 | lr 2.97e-03 | 596.9s
+  -> nouveau best.pt (val loss 5.9474)
+époque   2/16 | train loss 3.4259 (p 2.3165, v 0.7396) top1 0.3734 wdl 0.8377 | val loss 3.5522 (p 2.2890, v 0.8421) top1 0.3802 wdl 0.7932 | lr 2.89e-03 | 559.2s
+  -> nouveau best.pt (val loss 3.5522)
+époque   3/16 | train loss 3.3584 (p 2.2700, v 0.7256) top1 0.3902 wdl 0.8463 | val loss 5.0786 (p 2.3209, v 1.8384) top1 0.3720 wdl 0.4341 | lr 2.75e-03 | 561.1s
+époque   4/16 | train loss 3.3229 (p 2.2455, v 0.7182) top1 0.3993 wdl 0.8512 | val loss 3.5413 (p 2.2508, v 0.8603) top1 0.3953 wdl 0.7176 | lr 2.56e-03 | 562.1s
+  -> nouveau best.pt (val loss 3.5413)
+époque   5/16 | train loss 3.3027 (p 2.2313, v 0.7143) top1 0.4045 wdl 0.8540 | val loss 4.6166 (p 2.2772, v 1.5596) top1 0.3852 wdl 0.5852 | lr 2.33e-03 | 569.8s
+époque   6/16 | train loss 3.2867 (p 2.2206, v 0.7107) top1 0.4088 wdl 0.8566 | val loss 4.2817 (p 2.2801, v 1.3343) top1 0.3857 wdl 0.4316 | lr 2.07e-03 | 564.1s
+époque   7/16 | train loss 3.2748 (p 2.2123, v 0.7083) top1 0.4119 wdl 0.8583 | val loss 5.0434 (p 2.2866, v 1.8379) top1 0.3863 wdl 0.3525 | lr 1.79e-03 | 558.6s
+époque   8/16 | train loss 3.2637 (p 2.2050, v 0.7058) top1 0.4148 wdl 0.8602 | val loss 4.7689 (p 2.2550, v 1.6760) top1 0.4024 wdl 0.4175 | lr 1.50e-03 | 556.1s
+époque   9/16 | train loss 3.2555 (p 2.1991, v 0.7042) top1 0.4173 wdl 0.8614 | val loss 3.3879 (p 2.1978, v 0.7934) top1 0.4201 wdl 0.8294 | lr 1.21e-03 | 557.2s
+  -> nouveau best.pt (val loss 3.3879)
+époque  10/16 | train loss 3.2467 (p 2.1933, v 0.7023) top1 0.4197 wdl 0.8628 | val loss 5.4906 (p 2.2681, v 2.1484) top1 0.4002 wdl 0.6221 | lr 9.26e-04 | 565.6s
+époque  11/16 | train loss 3.2384 (p 2.1880, v 0.7003) top1 0.4223 wdl 0.8642 | val loss 4.3579 (p 2.2522, v 1.4039) top1 0.4027 wdl 0.3889 | lr 6.67e-04 | 565.5s
+époque  12/16 | train loss 3.2317 (p 2.1833, v 0.6989) top1 0.4246 wdl 0.8653 | val loss 3.4173 (p 2.1914, v 0.8173) top1 0.4187 wdl 0.7361 | lr 4.39e-04 | 565.3s
+époque  13/16 | train loss 3.2256 (p 2.1792, v 0.6976) top1 0.4266 wdl 0.8662 | val loss 3.9622 (p 2.1901, v 1.1814) top1 0.4220 wdl 0.7544 | lr 2.53e-04 | 563.7s
+époque  14/16 | train loss 3.2206 (p 2.1757, v 0.6966) top1 0.4287 wdl 0.8668 | val loss 3.2690 (p 2.1719, v 0.7314) top1 0.4301 wdl 0.8417 | lr 1.14e-04 | 562.2s
+  -> nouveau best.pt (val loss 3.2690)
+époque  15/16 | train loss 3.2166 (p 2.1730, v 0.6958) top1 0.4305 wdl 0.8676 | val loss 3.2358 (p 2.1680, v 0.7119) top1 0.4287 wdl 0.8581 | lr 2.88e-05 | 564.2s
+  -> nouveau best.pt (val loss 3.2358)
+époque  16/16 | train loss 3.2133 (p 2.1711, v 0.6948) top1 0.4324 wdl 0.8683 | val loss 3.3757 (p 2.1696, v 0.8040) top1 0.4334 wdl 0.8334 | lr 0.00e+00 | 568.1s
