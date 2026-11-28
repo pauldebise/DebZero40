@@ -21,10 +21,14 @@ Règles :
 | 26/11 | profilage et optimisation du moteur (Python) | 0 $ | banc : 1,73 -> 1,29 ms/nœud ; conditions réelles : 572 -> 664 nœuds/s (x1,16) | +16 % de nœuds pour zéro euro ; le réseau est désormais le poste dominant |
 | 26/11 | duel de vérification moteur ancien/nouveau, 200 parties, même réseau (dont un premier pod raté, image sans SSH) | 1,70 $ | 59,5 % [+67 Elo, IC +27/+108], mais 8 % de nœuds en plus seulement et score inversement corrélé à l'avantage de nœuds | gain réel ~+10 Elo ; le duel à 350 nœuds/coup est trop bruité pour trancher, ne pas refaire à cette taille |
 | 27/11 | model soup best/last (α = 0,5) et audit de calibration WDL, 250 k positions de validation (pod CPU de récupération des checkpoints) | ~0,01 $ | top-1 43,42 %, WDL 0,740, exactitude WDL 84,88 %, Brier 0,0835 | domine strictement `last` sur les six métriques ; à valider en duel avant déploiement |
+| 27-28/11 | run clean `nano_ib48` : cible MLH, filtre `--min-visits 100`, sélection combinée, 16 époques | 1,93 $ (calcul) + 7,45 $ de pod resté inactif après la fin | top-1 validation 42,98 %, WDL 85,71 %, MAE MLH 51 plies ; époque 16 retenue (0,6441) | pas de gain mesurable sur la validation contre le run du 26/11 ; évaluation externe encore nécessaire. Le pod aurait dû être supprimé à 02 h 00, pas à 12 h 15 |
 
 ## Ce que ça a coûté jusqu'ici
 
-Environ **7 $** de calcul GPU, pour un réseau qui bat la production de 215 Elo.
+Environ **16,4 $** de calcul GPU, pour un réseau qui bat la production de 215 Elo — dont
+**7,45 $ perdus** par un pod laissé allumé onze heures après la fin du run clean. Ce poste
+inutile représente presque la moitié de la dépense : le chien de garde qui supprime un pod
+inactif n'est pas une option.
 S'y ajoute le volume réseau `debzero-shards` (4 Go), facturé 0,004 $/h en continu. Le poste
 le plus rentable n'est pas le GPU : c'est le temps passé à mesurer (duel au temps égal,
 criblage à deux graines) qui a évité d'entraîner trois architectures perdantes.

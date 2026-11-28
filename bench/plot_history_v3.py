@@ -57,7 +57,7 @@ def style(ax, titre, ylabel=None, xlabel="époque", yformatter=True):
         ax.yaxis.set_major_formatter(FuncFormatter(virgule))
 
 
-def courbes_run(h, out, titre):
+def courbes_run(h, out, titre, externe=None):
     ep = [r["epoch"] for r in h]
     tr = [r["train"] for r in h]
     va = [r["val"] for r in h]
@@ -85,8 +85,8 @@ def courbes_run(h, out, titre):
     style(ax, "Perte de politique (KL cible → réseau)", "perte")
     ax.legend(frameon=False, fontsize=8)
     ax.annotate(f"{va[-1]['policy_loss']:.4f}".replace(".", ","),
-                xy=(ep[-1], va[-1]["policy_loss"]), xytext=(ep[-1] - 2.4, va[-1]["policy_loss"] - 0.035),
-                fontsize=8, color=VAL)
+                xy=(ep[-1], va[-1]["policy_loss"]), xytext=(ep[-1] - 3.2, va[-1]["policy_loss"] + 0.018),
+                fontsize=8, color=VAL, va="bottom")
 
     # 3. Perte WDL
     ax = axes[0][2]
@@ -96,7 +96,9 @@ def courbes_run(h, out, titre):
     style(ax, "Perte WDL (victoire / nulle / défaite)", "perte")
     ax.set_ylim(0.6, 2.65)
     ax.legend(frameon=False, fontsize=8, loc="upper right")
-    ax.annotate("jusqu'à 2,35 à l'époque 1 :\nau-delà du hasard", xy=(1, va[0]["wdl_loss"]),
+    pire = max(range(len(va)), key=lambda i: va[i]["wdl_loss"])
+    ax.annotate(f"jusqu'à {va[pire]['wdl_loss']:.2f} à l'époque {ep[pire]} :\nau-delà du hasard",
+                xy=(ep[pire], va[pire]["wdl_loss"]),
                 xytext=(4.4, 2.32), fontsize=8, color=WDL,
                 arrowprops=dict(arrowstyle="->", color=WDL, lw=1))
 
@@ -107,12 +109,14 @@ def courbes_run(h, out, titre):
     ax.axhline(35.24, color=GRID, ls=":", lw=1.2)
     ax.text(1.2, 35.9, "meilleur nano v2 : 35,2 %", fontsize=8, color=GRID)
     style(ax, "Top-1 de la politique", "top-1 (%)")
-    ax.scatter([ep[-1] + 0.18], [43.75], marker="*", s=150, color="#1a7f37", zorder=5,
-               label="évaluation externe")
+    if externe is not None:
+        ax.scatter([ep[-1] + 0.18], [100 * externe], marker="*", s=150, color="#1a7f37", zorder=5,
+                   label="évaluation externe")
+        ax.annotate(f"externe : {100 * externe:.2f} %".replace(".", ","),
+                    xy=(ep[-1] + 0.18, 100 * externe), xytext=(11.4, 100 * externe + 1.4),
+                    fontsize=8, color="#1a7f37",
+                    arrowprops=dict(arrowstyle="->", color="#1a7f37", lw=1))
     ax.legend(frameon=False, fontsize=8, loc="lower right")
-    ax.annotate("externe : 43,75 %", xy=(ep[-1] + 0.18, 43.75), xytext=(11.4, 45.1),
-                fontsize=8, color="#1a7f37",
-                arrowprops=dict(arrowstyle="->", color="#1a7f37", lw=1))
     ax.annotate(f"{100 * va[-1]['top1']:.2f} %".replace(".", ","),
                 xy=(ep[-1], 100 * va[-1]["top1"]), xytext=(ep[-1] - 3.1, 100 * va[-1]["top1"] - 1.4),
                 fontsize=8, color=VAL)
@@ -215,10 +219,12 @@ def main():
     ap.add_argument("--out", default="docs/mesures/courbes_nano_ib48.png")
     ap.add_argument("--out-compare", default="")
     ap.add_argument("--titre", default="nano_ib48 — 16 époques sur 20 M de positions (LC0)")
+    ap.add_argument("--externe", type=float, default=None,
+                    help="top-1 externe (fraction 0-1) à marquer d'une étoile ; omis si absent")
     args = ap.parse_args()
 
     h = charger(args.history)
-    courbes_run(h, args.out, args.titre)
+    courbes_run(h, args.out, args.titre, args.externe)
     if args.v2 and args.out_compare:
         comparaison(h, charger(args.v2), args.out_compare)
 
